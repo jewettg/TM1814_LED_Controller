@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local data and secrets (never commit these)
+data/
+*.db
+*.sqlite3
+*.env
+.env
+*.pcap
+*.apk
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

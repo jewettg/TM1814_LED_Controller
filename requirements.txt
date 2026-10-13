@@ -1,0 +1,5 @@
+# Runtime dependencies for tm1814-led
+fastapi>=0.110
+uvicorn[standard]>=0.27
+astral>=3.2          # sunrise/sunset for schedules
+tzdata>=2024.1       # IANA time zones (needed on Windows and minimal Linux images)
