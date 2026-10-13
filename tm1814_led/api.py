@@ -1,16 +1,15 @@
 """The web API (FastAPI) and the static web UI."""
 from __future__ import annotations
 
-import base64
 import datetime as dt
-import hmac
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -18,6 +17,7 @@ from . import __version__
 from . import effects as fx
 from . import protocol as P
 from . import scheduler as sch
+from .auth import COOKIE, Auth
 from .config import default_data_dir
 from .controller import Controller, ControllerError, SimulatedController, discover
 from .db import Conflict, Database, NotFound
@@ -104,6 +104,10 @@ class OccurrencesIn(BaseModel):
     count: int = 6
 
 
+class LoginIn(BaseModel):
+    password: str = ""
+
+
 class PowerIn(BaseModel):
     on: bool
 
@@ -148,20 +152,56 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     app = FastAPI(title="tm1814-led", version=__version__, lifespan=lifespan)
     app.state.db, app.state.controller, app.state.runner, app.state.manager = db, controller, runner, manager
 
-    # ---- optional password (HTTP Basic, any user name)
-    if password:
-        @app.middleware("http")
-        async def basic_auth(request: Request, call_next):
-            header = request.headers.get("authorization", "")
-            if header.lower().startswith("basic "):
-                try:
-                    given = base64.b64decode(header[6:]).decode("utf-8", "replace").split(":", 1)[-1]
-                    if hmac.compare_digest(given.encode(), password.encode()):
-                        return await call_next(request)
-                except Exception:
-                    pass
-            return PlainTextResponse("Password required", status_code=401,
-                                     headers={"WWW-Authenticate": 'Basic realm="tm1814-led"'})
+    # ---- login page + session cookie (the web page is the only interface)
+    auth = Auth(password, db.auth_secret())
+    app.state.auth = auth
+    PUBLIC = {"/login", "/api/login", "/api/auth", "/style.css", "/favicon.ico"}
+
+    @app.middleware("http")
+    async def require_login(request: Request, call_next):
+        path = request.url.path
+        if not auth.enabled or path in PUBLIC or auth.valid_token(request.cookies.get(COOKIE)):
+            response = await call_next(request)
+        elif path.startswith("/api/"):
+            response = JSONResponse({"detail": "login required"}, status_code=401)  # no WWW-Authenticate: no browser pop-up
+        else:
+            response = RedirectResponse("/login", status_code=302)
+        # never let a browser reuse a page or answer without asking us: after Log out the next request must be redirected
+        response.headers["Cache-Control"] = "no-store" if path.startswith("/api/") else "no-cache"
+        return response
+
+    @app.get("/login", include_in_schema=False)
+    def login_page():
+        if not auth.enabled:
+            return RedirectResponse("/", status_code=302)
+        return FileResponse(str(WEB_DIR / "login.html"))
+
+    @app.post("/api/login")
+    def login(body: LoginIn, request: Request):
+        client = request.client.host if request.client else "unknown"
+        wait = auth.blocked_for(client)
+        if wait:
+            return JSONResponse({"detail": f"Too many wrong passwords. Try again in {wait} seconds."}, status_code=429)
+        if not auth.enabled or auth.check_password(body.password):
+            auth.record_success(client)
+            resp = JSONResponse({"ok": True})
+            resp.set_cookie(COOKIE, auth.make_token(), max_age=auth.session_seconds, httponly=True,
+                            samesite="lax", path="/")
+            return resp
+        auth.record_failure(client)
+        time.sleep(0.6)  # slows down guessing
+        return JSONResponse({"detail": "That is not the password."}, status_code=401)
+
+    @app.post("/api/logout")
+    def logout():
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(COOKIE, path="/")
+        return resp
+
+    @app.get("/api/auth")
+    def auth_info(request: Request):
+        ok = (not auth.enabled) or auth.valid_token(request.cookies.get(COOKIE))
+        return {"required": auth.enabled, "authenticated": bool(ok)}
 
     # ---- error mapping
     @app.exception_handler(NotFound)

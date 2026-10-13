@@ -199,6 +199,16 @@ class Database:
             out["seeded_keys"] = list(ch["seeded_keys"])
         return out
 
+    def auth_secret(self) -> str:
+        """A random secret created on first use (signs login sessions). Not part of the editable settings."""
+        row = self._one("SELECT value FROM settings WHERE key = '_auth_secret'")
+        if row:
+            return json.loads(row["value"])
+        import secrets
+        secret = secrets.token_hex(32)
+        self._write("INSERT INTO settings(key, value) VALUES('_auth_secret', ?)", (json.dumps(secret),))
+        return secret
+
     def place(self) -> sch.Place:
         s = self.settings()
         return sch.Place(s["timezone"], s["latitude"], s["longitude"])

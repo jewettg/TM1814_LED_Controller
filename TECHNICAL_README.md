@@ -506,7 +506,8 @@ JSON over HTTP, prefix `/api`. Errors are `{"detail": "message"}`:
 | 409 | conflict (duplicate name, item in use) |
 | 422 | invalid input (bad parameter, bad schedule spec, unknown kind) |
 | 502 | the controller could not be reached for this request |
-| 401 | password required (when a password is configured) |
+| 401 | not signed in (`/api/login`: wrong password) |
+| 429 | too many wrong passwords |
 
 Interactive documentation is served by FastAPI at `/docs` (and `/openapi.json`) — note this is a separate path from the web UI.
 
@@ -515,6 +516,7 @@ Interactive documentation is served by FastAPI at `/docs` (and `/openapi.json`) 
 | Route | Description |
 | --- | --- |
 | `GET /api/status` | runtime status (above) |
+| `POST /api/login`, `POST /api/logout`, `GET /api/auth` | sign in `{password}` / sign out / `{required, authenticated}` (public; see section 13) |
 | `GET /api/meta` | `{version, simulated, timezones[], weekdays[], repeat_types[], led_count, builtin_patterns[]}` |
 | `GET /api/effect-kinds` | schema for every effect kind (drives the editor forms) |
 | `GET /api/logs?count=200` | recent log lines `{ts, level, msg}` |
@@ -578,19 +580,22 @@ curl -s -X POST localhost:8080/api/control/play -H 'Content-Type: application/js
 ## 13. Security model
 
 * The controller itself has **no authentication**; anyone on the same network can drive it. Keep it on a trusted LAN/VLAN.
-* The web app has **optional HTTP Basic authentication** with a single shared password (any user name). Set `--password` / `TM1814_PASSWORD`, or use `--install --password … | --generate-password`. The password comparison is constant-time.
-* There is **no TLS**. Basic authentication sends the password in clear text on the LAN. For anything beyond a trusted home network, put the app behind a reverse proxy that terminates HTTPS, or bind it to `127.0.0.1` (`--host 127.0.0.1`).
-* The service listens on `0.0.0.0` by default so phones can reach it; a startup warning is logged if no password is set and the address is not loopback.
-* The system service runs as an unprivileged `tm1814` user with `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome` and write access only to its data directory.
-* The settings file (`tm1814-led.env`, which may hold the password) is created `0600` (user installs) or `0640 root:tm1814` (system install).
-* The UI builds DOM with `textContent`, never `innerHTML`, for user-entered strings. User data is only ever passed to SQLite as bound parameters.
+* **The web page is the only way into the program, and it always requires a password.** `serve` refuses to start without one (except `--simulate`); the installer always sets one. A single shared password; no accounts.
+* **Sign-in:** `POST /api/login {"password"}` returns an `HttpOnly`, `SameSite=Lax` cookie `tm1814_session` holding `v1.<expiry>.<HMAC-SHA256>`. The key is derived from a random 256-bit secret kept in the database plus a hash of the password, so sessions survive restarts and **changing the password signs everyone out**. Sessions last 30 days. Nothing about sessions is stored server-side.
+* **Gatekeeping:** a middleware lets only `/login`, `/api/login`, `/api/auth` and `/style.css` through without a valid cookie. Unauthenticated `/api/*` requests get `401 {"detail": "login required"}` **without** a `WWW-Authenticate` header (so browsers never show a native prompt); other paths get `302 /login`. **HTTP Basic is not accepted.** `/docs` and `/openapi.json` are protected too.
+* **Caching:** every response carries `Cache-Control: no-store` (API) or `no-cache` (pages), so after Log out a browser can never show a cached page before being redirected.
+* **Brute force:** 8 wrong passwords per client address in 5 minutes returns `429` for the rest of the window; every wrong guess also costs 0.6 s. Password comparison is constant-time.
+* There is **no TLS**: the password and cookie cross the LAN in clear text. Put the app behind a reverse proxy that terminates HTTPS for anything beyond a trusted home network, or bind it to `127.0.0.1` (`--host 127.0.0.1`).
+* The command line is a client of the same sign-in (section 15): it prompts for the password (no echo) and caches only the signed session token, in a `0600` file keyed to the terminal session, expiring after 12 hours. It does not read the password from any file.
+* The system service runs as an unprivileged `tm1814` user with `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome` and write access only to its data directory. The settings file (`tm1814-led.env`, which holds the password) is `0600` (user installs) or `0640 root:tm1814` (system install).
+* The UI builds DOM with `textContent`, never `innerHTML`, for user-entered strings. User data reaches SQLite only as bound parameters.
 * The program never sends the configuration-write and reset commands (section 6).
 
 ---
 
 ## 14. Installer internals
 
-`tm1814-led --install [--system|--user] [--port N] [--host ADDR] [--controller-host IP] [--password PW | --generate-password | --no-auth] [--dry-run]`
+`tm1814-led --install [--system|--user] [--port N] [--host ADDR] [--controller-host IP] [--password PW | --generate-password] [--dry-run]` (a password is always set: given, kept from a previous install, typed at a prompt, or generated)
 
 Always run `--dry-run` first to see every command and file.
 
@@ -602,7 +607,7 @@ Always run `--dry-run` first to see every command and file.
 | macOS | user (LaunchAgent; runs while you are logged in) | `~/Library/Application Support/tm1814-led/venv` | `…/data` | `…/tm1814-led.env` (0600) | `~/Library/LaunchAgents/com.jewettg.tm1814-led.plist`; logs in `~/Library/Logs/tm1814-led/` |
 | Windows | user (task at logon) or administrator (task at startup as SYSTEM) | `%LOCALAPPDATA%\tm1814-led\venv` | `…\data` | `…\tm1814-led.env` | Scheduled Task "TM1814 LED Controller" running `pythonw -m tm1814_led serve --env-file …` |
 
-Steps: (1) create the system user (Linux system mode); (2) create a virtual environment with the current Python (≥3.9); (3) `pip install` **this checkout** into it (so the checkout can later be moved or deleted; installing requires running from a repository checkout); (4) write the settings file (data dir, host, port, optional password and controller address); (5) write and enable the service; (6) print the URL.
+Steps: (1) create the system user (Linux system mode); (2) create a virtual environment with the current Python (≥3.9); (3) `pip install` **this checkout** into it (so the checkout can later be moved or deleted; installing requires running from a repository checkout); (4) put a `tm1814-led` link on your PATH (`/usr/local/bin` for a system install, `~/.local/bin` for a user install; skipped on Windows), (5) write the settings file (data dir, host, port, optional password and controller address); (6) write and enable the service; (7) print the URLs.
 
 `--uninstall` stops and removes the service and settings file but **keeps your data**; add `--purge` to delete the program folder, data, and (Linux system mode) the `tm1814` user. It asks for confirmation unless `--yes`. `--service-status` shows the service state.
 
@@ -615,15 +620,27 @@ Service environment variables (the settings file; `cli.load_env_file` loads it w
 ### Command line
 
 ```
-tm1814-led [serve] [--host ADDR] [--port N] [--data-dir DIR] [--controller-host IP]
-           [--simulate] [--password PW] [--env-file FILE] [--log-level LEVEL]
-tm1814-led discover
-tm1814-led state|on|off [--controller-host IP]
-tm1814-led color #rrggbb [--controller-host IP]
-tm1814-led --install | --uninstall | --service-status   (see section 14)
+tm1814-led                     list the commands
+tm1814-led serve [--host ADDR] [--port N] [--data-dir DIR] [--controller-host IP] [--simulate]
+                 [--password PW] [--env-file FILE] [--log-level LEVEL]
+tm1814-led install|uninstall|service      same as --install / --uninstall / --service-status (section 14)
+
+ service commands (via the running web service):
+tm1814-led status | effects [text] [--native|--streamed] | runlists | schedules
+tm1814-led play NAME [--effect|--runlist] [--for SECONDS] | stop | next | pause | resume
+tm1814-led brightness 0-100 | logs [-n N] [-f]
+ direct commands (straight to the controller; sign-in still required):
+tm1814-led discover | state | on | off | color COLOR [--white LEVEL] | test [PATTERN [N]] [--delay S]
+ session:
+tm1814-led login | logout
+ common options:  --url URL   --controller-host HOST[:PORT]   --json   --no-color
 ```
 
-`python -m tm1814_led …` is equivalent. `--simulate` runs everything against a fake controller (no hardware), which is how the UI and tests are developed.
+`python3 -m tm1814_led …` is equivalent. `--simulate` runs everything against a fake controller (no hardware), which is how the UI and tests are developed.
+
+**Sign-in for the CLI** (`client.py`): the first command in a terminal session prompts `Password for the LED controller at <url>:` (up to 3 attempts), calls `POST /api/login`, and stores `{url, token, saved}` in `~/Library/Caches/tm1814-led/session-<sid>.json` (macOS), `$XDG_CACHE_HOME|~/.cache/tm1814-led/…` (Linux) or `%LOCALAPPDATA%\tm1814-led\cache\…` (Windows), mode `0600`, where `<sid>` is the POSIX session id (one per terminal window; the parent PID elsewhere). Entries older than 12 hours, or for a different `--url`, are ignored, and a token the service rejects (expired, or the password changed) is discarded and the prompt appears again. `TM1814_PASSWORD` supplies the password without prompting, for scripts. Direct commands sign in first too, then read the saved controller address from the service's settings (`GET /api/settings`) unless `--controller-host` is given.
+
+The service URL defaults to `http://127.0.0.1:<port>`, with the port read from the installed settings file (or 8080). `--json` prints the service's JSON; `test` patterns live in `diagnostics.py`.
 
 ### Environment
 
@@ -631,7 +648,8 @@ tm1814-led --install | --uninstall | --service-status   (see section 14)
 | --- | --- |
 | `TM1814_DATA_DIR` | `--data-dir` (default: per-user data folder for the OS) |
 | `TM1814_HOST` / `TM1814_PORT` | `--host` / `--port` (defaults `0.0.0.0` / `8080`) |
-| `TM1814_PASSWORD` | `--password` |
+| `TM1814_PASSWORD` | `serve --password` (and, for the CLI, the password to sign in with non-interactively) |
+| `TM1814_URL` | CLI `--url` |
 | `TM1814_CONTROLLER_HOST` | `--controller-host` (only used when the database has none yet) |
 
 ---
@@ -653,7 +671,9 @@ pytest -q
 | `test_db.py` | CRUD, uniqueness, in-use protection, settings validation, seeding |
 | `test_runner.py` | playing/looping/next/pause/stop, idle actions, schedule start/stop, user-stop suppression, priority, restart on edit |
 | `test_api.py` | every route group end to end with the simulated controller, auth, error codes |
-| `test_installer.py` | file contents per OS, mode selection, a full install against a fake command runner, dry runs |
+| `test_installer.py` | file contents per OS, mode selection, address detection (VPN-safe), a password is always set, a full install against a fake command runner, dry runs |
+| `test_auth.py` | login page and cookie sessions, redirects, forged/expired tokens, throttling, no cache, Basic rejected |
+| `test_cli.py` | the real CLI against a live local service: password prompt once per terminal session, session cache, name matching, every command, direct commands against a fake controller |
 
 The streaming engine was also exercised against real hardware through the running service: solid color, a built-in animation, embers, comet, wave, lightning and rainbow ran for 12 s each with zero errors at ~30 commands/s, and Stop returned the controller to off. The lights themselves were evaluated visually by the owner during development (the alternating-pixel test, the effect scenes and their color tweaks).
 

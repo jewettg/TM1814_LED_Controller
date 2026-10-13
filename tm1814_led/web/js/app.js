@@ -41,9 +41,9 @@ subscribe((st, err) => {
     return;
   }
   const c = st.controller, playing = st.state !== 'idle';
-  barDot.className = 'dot ' + (c.connected ? 'ok' : (c.last_error ? 'bad' : 'warn'));
-  barConnWrap.title = c.last_error || (c.connected ? 'Controller connected' : 'Controller not connected');
-  barConn.textContent = c.simulated ? 'Simulated controller' : (c.host ? (c.connected ? 'Connected to ' + c.host : 'Not connected to ' + c.host) : 'No controller set');
+  barDot.className = 'dot ' + (c.last_error ? 'bad' : (c.host ? 'ok' : 'warn'));
+  barConnWrap.title = c.last_error || (c.connected ? 'Controller connected' : 'The program connects to the controller when it has something to send');
+  barConn.textContent = c.simulated ? 'Simulated controller' : (c.host ? (c.last_error ? 'Cannot reach ' + c.host : (c.connected ? 'Connected to ' + c.host : 'Controller ' + c.host + ' (ready)')) : 'No controller set');
   if (!playing) barNow.textContent = 'Nothing playing';
   else {
     const it = st.item && st.item.name ? st.item.name : '';
@@ -51,6 +51,17 @@ subscribe((st, err) => {
   }
   barStop.hidden = !playing;
 });
+// ---- "Log out" link, only shown when a password is set
+fetch('/api/auth', { credentials: 'same-origin' }).then((r) => r.json()).then((a) => {
+  const link = document.getElementById('logout');
+  if (!a.required) return;
+  link.hidden = false;
+  link.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (err) { /* sign out anyway */ }
+    window.location.href = '/login';
+  });
+}).catch(() => {});
 startPolling();
 getMeta().catch(() => {});
 window.addEventListener('unhandledrejection', (e) => { console.error(e.reason); });

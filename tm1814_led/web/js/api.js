@@ -22,6 +22,7 @@ export async function request(method, path, body, opts = {}) {
     if (e.name === 'AbortError') throw e;
     throw new ApiError('Cannot reach the LED program. Is it running? (' + e.message + ')', 0);
   }
+  if (res.status === 401) { window.location.href = '/login'; throw new ApiError('Please sign in.', 401); }
   if (res.status === 204) return null;
   let data = null;
   const text = await res.text();

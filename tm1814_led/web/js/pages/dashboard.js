@@ -156,7 +156,7 @@ export async function dashboard(ctx) {
     const row = (k, v) => [h('dt', null, k), h('dd', null, v)];
     render(ctlBox,
       row('Address', (c.host || 'not set') + (c.host ? ':' + c.port : '')),
-      row('Connection', h('span', null, h('span', { class: 'dot ' + (c.connected ? 'ok' : 'bad') }), c.connected ? 'Connected' : 'Not connected', c.simulated ? h('span', { class: 'badge warn', style: { marginLeft: '8px' } }, 'Simulated') : null)),
+      row('Connection', h('span', null, h('span', { class: 'dot ' + (c.last_error ? 'bad' : 'ok') }), c.last_error ? 'Cannot reach it' : (c.connected ? 'Connected' : 'Ready (connects when needed)'), c.simulated ? h('span', { class: 'badge warn', style: { marginLeft: '8px' } }, 'Simulated') : null)),
       row('LED count', String(c.led_count)),
       row('Power', c.power === null || c.power === undefined ? 'unknown' : (c.power ? 'On' : 'Off')),
       row('Firmware', c.firmware !== null && c.firmware !== undefined ? 'v' + c.firmware + (c.model ? ' (model ' + c.model + ')' : '') : 'unknown'),

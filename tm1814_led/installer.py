@@ -299,9 +299,8 @@ class Installer:
                                "(pyproject.toml was not found next to the tm1814_led package).")
         return root
 
-    def password(self) -> Optional[str]:
-        if self.a.no_auth:
-            return None
+    def password(self) -> str:
+        """A password is always set: given on the command line, kept from a previous install, typed, or generated."""
         if self.a.password:
             return self.a.password
         if self.a.generate_password:
@@ -312,9 +311,15 @@ class Installer:
             self.say("  keeping the password already set in the settings file (use --generate-password for a new one)")
             return existing
         if sys.stdin.isatty() and not self.dry:
-            typed = getpass.getpass("Password to protect the web page (Enter for none): ")
-            return typed or None
-        return None
+            while True:
+                typed = getpass.getpass("Choose a password for the web page: ")
+                if typed and getpass.getpass("Type it again: ") == typed:
+                    return typed
+                self.say("  The passwords were empty or did not match; try again.")
+        self.generated = secrets.token_urlsafe(12)
+        return self.generated
+
+    generated: Optional[str] = None
 
     def _existing_password(self) -> Optional[str]:
         try:
@@ -362,6 +367,7 @@ class Installer:
         # pip may skip a same-version reinstall of a local folder; force the program code itself to refresh
         self.run([py, "-m", "pip", "install", "--quiet", "--force-reinstall", "--no-deps", str(source)])
 
+        self._link_cli()
         self.say("Writing settings and the service definition:")
         env_text = render_env_file(p.data_dir, self.a.host, self.a.port, password, self.a.controller_host)
         self.write(p.env_file, env_text, 0o640 if p.mode == "system" else 0o600,
@@ -377,6 +383,34 @@ class Installer:
             self._install_windows()
         self._finish(password)
         return 0
+
+    def cli_link_path(self) -> Optional[Path]:
+        """Where the `tm1814-led` command is linked so it works from any terminal (not on Windows)."""
+        if self.os == "windows":
+            return None
+        if self.os == "linux" and self.paths.mode == "system":
+            return Path("/usr/local/bin/tm1814-led")
+        return Path.home() / ".local" / "bin" / "tm1814-led"
+
+    def _link_cli(self) -> None:
+        link = self.cli_link_path()
+        if link is None:
+            return
+        if self.dry:
+            self.say(f"  [dry run] link {link} -> {self.paths.exe}")
+            return
+        try:
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(self.paths.exe)
+        except OSError as exc:
+            self.say(f"  note: could not create {link} ({exc}); run the program as {self.paths.exe}")
+            return
+        self.say(f"  linked {link}")
+        if str(link.parent) not in os.environ.get("PATH", "").split(os.pathsep):
+            self.say(f"  note: {link.parent} is not on your PATH. Add it (for zsh: echo 'export PATH=\"{link.parent}:$PATH\"' "
+                     ">> ~/.zshrc) or run `python3 -m tm1814_led`.")
 
     def _install_linux(self) -> None:
         p = self.paths
@@ -440,8 +474,6 @@ class Installer:
             self.say("  A random password would be generated and shown once (any user name works with it).")
         elif self.generated:
             self.say(f"  Password (shown once, any user name): {self.generated}")
-        elif not password:
-            self.say("  No password is set: anyone on your network can use the page. Re-run with --generate-password to add one.")
         if self.os == "windows":
             self.say("  You may need to allow the program through Windows Firewall to reach it from other devices.")
 
@@ -493,6 +525,9 @@ class Installer:
             self.run(["schtasks", "/End", "/TN", WINDOWS_TASK], check=False, quiet=True)
             self.run(["schtasks", "/Delete", "/TN", WINDOWS_TASK, "/F"], check=False)
         self._remove(p.env_file)
+        link = self.cli_link_path()
+        if link is not None and (link.is_symlink() and os.readlink(link) == str(p.exe) or self.dry):
+            self._remove(link)
         if self.a.purge:
             self._remove(p.venv, tree=True)
             self._remove(p.data_dir, tree=True)
@@ -509,9 +544,9 @@ class Installer:
         if self.dry:
             self.say(f"  [dry run] remove {path}")
             return
-        if path.is_dir() and tree:
+        if path.is_dir() and tree and not path.is_symlink():
             shutil.rmtree(path, ignore_errors=True)
-        elif path.exists():
+        elif path.exists() or path.is_symlink():        # a link whose target is already gone still counts
             path.unlink()
         else:
             return
@@ -543,9 +578,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="0.0.0.0", help="address the web page listens on (default: all)")
     p.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"web page port (default {DEFAULT_PORT})")
     p.add_argument("--controller-host", default=None, help="controller IP (can also be set in the web page)")
-    p.add_argument("--password", default=None, help="password for the web page")
-    p.add_argument("--generate-password", action="store_true", help="create a random password and show it once")
-    p.add_argument("--no-auth", action="store_true", help="no password (anyone on the network can use the page)")
+    p.add_argument("--password", default=None, help="password for the web page (default: keep the current one, else ask)")
+    p.add_argument("--generate-password", action="store_true", help="create a new random password and show it once")
     p.add_argument("--dry-run", action="store_true", help="show what would be done; change nothing")
     p.add_argument("--yes", "-y", action="store_true", help="do not ask for confirmation (uninstall)")
     p.add_argument("--purge", action="store_true", help="uninstall: also delete the data and the program folder")

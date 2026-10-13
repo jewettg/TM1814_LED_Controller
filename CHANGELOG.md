@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+* **Login page** with a session cookie replaces HTTP Basic (browsers handled it badly). A password is now **always**
+  required: the installer sets one and `serve` refuses to start without one. Log out link, login throttling,
+  no-cache headers.
+* **Command line rewritten**: status, effects, runlists, schedules, play, stop, next, pause, resume, brightness,
+  logs, plus discover, state, on, off, color and `test` walk-around patterns. Every command asks for the password
+  once per terminal session (only a signed token is cached, `0600`, 12 hours); `login` / `logout`; `--json`,
+  colored output, named colors.
+* Installer lists every local address (a VPN address is never presented as the home-network address), keeps the
+  existing password on re-install, and retries `launchctl bootstrap`.
+
 ## 0.1.0 — first release
 
 * Control library for the Zengge/Surplife `0xB6` (TM1814 RGBW) controller: state, power, solid color,

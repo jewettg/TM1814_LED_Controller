@@ -121,14 +121,6 @@ def test_controller_state_and_logs(client):
     assert any("playing" in l["msg"] for l in client.get("/api/logs").json())
 
 
-def test_password_protection():
-    app = create_app(data_dir=":memory:", simulate=True, password="s3cret", start_background=False)
-    with TestClient(app) as c:
-        assert c.get("/api/status").status_code == 401
-        assert c.get("/api/status", auth=("anyone", "wrong")).status_code == 401
-        assert c.get("/api/status", auth=("anyone", "s3cret")).status_code == 200
-
-
 def test_needs_setup_when_no_controller_configured():
     app = create_app(data_dir=":memory:", simulate=False, start_background=False)
     with TestClient(app) as c:

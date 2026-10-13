@@ -39,10 +39,10 @@ You need **Python 3.9 or newer** (check with `python3 --version`).
 python3 -m tm1814_led --install --dry-run
 
 # Then do it. On a Raspberry Pi, use sudo to get a proper system service:
-sudo python3 -m tm1814_led --install --generate-password
+sudo python3 -m tm1814_led --install
 ```
 
-It prints the address of the web page (for example `http://192.168.1.20:8080/`) and, with `--generate-password`, a password to write down. Open the address in a browser.
+The installer asks you to choose a password for the web page (or, if you add `--generate-password`, makes one and shows it once). It then prints the address of the web page, for example `http://192.168.1.20:8080/`. Open that address in a browser and sign in.
 
 On macOS or Windows leave out `sudo`; on Windows run it from a Command Prompt or PowerShell. Details for each system are [below](#installing-as-a-service).
 
@@ -64,7 +64,7 @@ Go to **Effects** (the catalog), find *Halloween - Embers* (or any effect) and p
 python3 -m venv .venv
 . .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m tm1814_led serve --controller-host 192.168.1.50
+python -m tm1814_led serve --controller-host 192.168.1.50 --password choose-a-password
 ```
 
 Open <http://localhost:8080/>. Add `--simulate` to explore the whole app **with no controller at all**.
@@ -176,7 +176,7 @@ Always run it once with **`--dry-run`** first to see every file it will write an
 | `--port 8080` | web page port |
 | `--host 0.0.0.0` | which network address to listen on (`127.0.0.1` = this computer only) |
 | `--controller-host IP` | pre-fill the controller's address |
-| `--password PW` / `--generate-password` / `--no-auth` | protect the page with a password, or not |
+| `--password PW` / `--generate-password` | set the web page password. A password is **always** required; without these options the installer asks you to choose one (and keeps the existing one on a re-install). |
 
 | Your computer | What you get |
 | --- | --- |
@@ -204,8 +204,10 @@ Your data is kept.
 
 ## Security
 
-* The controller itself has **no password**: anyone on your Wi-Fi can control it. Keep it on a network you trust.
-* Use `--generate-password` (or `--password`) so the web page asks for one (any user name). It is sent as plain HTTP Basic authentication, so it protects against casual use on your home network, not against someone watching the network. Don't expose this to the internet; if you need remote access, use a VPN (for example WireGuard or Tailscale).
+* **A password is always required.** The web page shows a sign-in form; nothing — the lights, the catalog, the settings, the command line — works without it. The program refuses to start without a password, and the installer always sets one.
+* Signing in keeps you signed in on that browser for 30 days (or until you press **Log out**). Eight wrong passwords within five minutes from one device are followed by a short lockout. Changing the password signs every browser out.
+* The controller itself has **no password**: anyone on your Wi-Fi can control it directly with the vendor's app. Keep your Wi-Fi trustworthy.
+* The page is served over plain HTTP, so the password can be read by someone watching your network. That is fine on a home network you trust, but **do not expose this to the internet**; for remote access use a VPN (for example WireGuard or Tailscale).
 * The program never uses the vendor's cloud and never changes the controller's stored configuration (pixel count, IC type, wiring) — see the technical notes.
 
 ---
@@ -239,7 +241,7 @@ The service restarts at boot and the schedules pick up again. A controller that 
 | *Find controllers* finds nothing | Be sure the computer and controller are on the same network (not a "guest" Wi-Fi). Some routers block broadcast traffic — enter the controller's IP address by hand (find it in your router, or in the vendor app under the device's *More device information*). |
 | "controller: connect failed" | Wrong address, or the controller is off or busy. Try again in 10 seconds. Only one program should be talking to it. |
 | Lights do something odd after changing settings | Press **Stop**, wait a few seconds and play again. |
-| The page asks for a password and I lost it | Edit the settings file shown by `--install` (variable `TM1814_PASSWORD`) or re-run the installer with a new `--password`. |
+| I forgot the password | Run the installer again with a new one: `python3 -m tm1814_led --install --generate-password` (or `--password YOUR_NEW_PASSWORD`). Your data is kept. |
 | Sunset times look wrong | Set your **latitude, longitude and time zone** in Settings. |
 | Something is not working and I want details | *Logs* in the web page, or `journalctl -u tm1814-led -f` on Linux. |
 
@@ -247,13 +249,34 @@ The service restarts at boot and the schedules pick up again. A controller that 
 
 ## Command line
 
+The web page does everything, but the command line is handy for quick checks and scripts. **Every command asks for the web page's password once** (typed without showing) and then remembers the sign-in for that terminal window. Closing the terminal, `tm1814-led logout`, or 12 hours ends it. Only a signed-in token is remembered, never the password.
+
 ```bash
-python3 -m tm1814_led discover                    # find controllers
-python3 -m tm1814_led state --controller-host IP  # show the controller's state
-python3 -m tm1814_led on|off  --controller-host IP
-python3 -m tm1814_led color "#ff5a00" --controller-host IP
-python3 -m tm1814_led serve --simulate            # try everything with no hardware
+tm1814-led                      # list all commands        (or: python3 -m tm1814_led)
+tm1814-led status               # what's playing, controller state, next scheduled runs
 ```
+
+| Command | What it does |
+| --- | --- |
+| **Talk to the service** | |
+| `status` | what is playing, controller connection, active and upcoming schedules |
+| `effects [text]` | list the catalog (`--native` / `--streamed` to filter) |
+| `runlists`, `schedules` | list run lists, and schedules with their next start |
+| `play "name"` | play an effect or run list by name, part of a name, or id (`--effect` / `--runlist` to be specific, `--for 120` to stop an effect after two minutes) |
+| `stop`, `next`, `pause`, `resume` | control playback (`stop` turns the lights off unless you chose another "when idle" action) |
+| `brightness 60` | master brightness |
+| `logs [-n 50] [-f]` | recent log lines, or follow them |
+| **Talk to the controller directly** | |
+| `discover` | find controllers on your network |
+| `state` | power, what it is showing, LED count, firmware |
+| `on`, `off`, `color orange` | power, or a solid color (`#rrggbb`, `255,90,0`, or a name like `warm`, `purple`; `--white 80` for the white LED) |
+| `test halves` | light a **walk-around pattern** to learn how your strip is laid out: `halves`, `ruler`, `zones`, `blocks`, `colororder`, `gradient`, `chase`, `fillto 100`, `single 0`. Ctrl-C ends it and turns the lights off. `tm1814-led test` lists them. |
+| **Session and service** | |
+| `login`, `logout` | sign in now / forget this terminal's sign-in |
+| `install`, `uninstall`, `service` | the same as `--install`, `--uninstall`, `--service-status` |
+| `serve` | run the web page in the foreground (what the service does for you) |
+
+Add `--json` to any listing for machine-readable output and `--no-color` for plain text. For scripts that cannot type a password, set the `TM1814_PASSWORD` environment variable. The direct commands (`on`, `off`, `color`, `test`...) talk straight to the controller, so run `tm1814-led stop` first if the service is playing something.
 
 ---
 
