@@ -56,8 +56,10 @@ def test_env_file_contents():
 
 
 @pytest.mark.parametrize("os_name", ["linux", "macos", "windows"])
-def test_dry_run_install_changes_nothing_and_masks_password(os_name, capsys, monkeypatch):
+def test_dry_run_install_changes_nothing_and_masks_password(os_name, capsys, monkeypatch, tmp_path):
     monkeypatch.setattr(I, "has_systemd", lambda: True)
+    for var in ("HOME", "USERPROFILE", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(var, str(tmp_path))          # never look at (or touch) this machine's real install
     inst = I.Installer(args(password="topsecret", no_auth=False), os_name=os_name)
     inst.install()
     out = capsys.readouterr().out
@@ -112,3 +114,39 @@ def test_uninstall_dry_run_keeps_data(capsys, monkeypatch):
     assert "disable --now" in out and "kept your data" in out
     I.Installer(args(purge=True), os_name="linux").uninstall()
     assert "remove" in capsys.readouterr().out
+
+
+IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+\tinet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+\tinet 192.168.100.163 netmask 0xffffff00 broadcast 192.168.100.255
+utun12: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+\tinet 172.29.12.74 --> 172.29.12.74 netmask 0xffffffff
+\tinet 169.254.1.2 netmask 0xffff0000
+"""
+IP_ADDR = "2: eth0    inet 192.168.1.20/24 brd 192.168.1.255 scope global eth0\n3: wg0    inet 10.8.0.2/32 scope global wg0\n"
+IPCONFIG = "   IPv4 Address. . . . . . . . . . . : 192.168.1.77\n   Subnet Mask . . . . . . . . . . . : 255.255.255.0\n"
+
+
+def test_parse_addresses_from_each_os_tool():
+    assert I.parse_ipv4_addresses(IFCONFIG) == ["192.168.100.163", "172.29.12.74"]   # loopback and link-local skipped
+    assert I.parse_ipv4_addresses(IP_ADDR) == ["192.168.1.20", "10.8.0.2"]
+    assert I.parse_ipv4_addresses(IPCONFIG) == ["192.168.1.77"]
+
+
+def test_vpn_address_never_wins_over_the_network_with_the_controller():
+    ips = ["172.29.12.74", "192.168.100.163"]
+    assert I.rank_addresses(ips) == ["192.168.100.163", "172.29.12.74"]            # 192.168 preferred
+    assert I.rank_addresses(["10.8.0.2", "192.168.1.20"], "10.8.0.9")[0] == "10.8.0.2"   # but the controller's network wins
+    assert I.rank_addresses(["8.8.8.8", "172.20.1.1", "10.0.0.5"]) == ["10.0.0.5", "172.20.1.1", "8.8.8.8"]
+    assert I.rank_addresses(["172.29.12.74", "172.29.12.74"]) == ["172.29.12.74"]  # de-duplicated
+
+
+def test_reinstall_keeps_existing_password(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(I, "has_systemd", lambda: True)
+    inst = I.Installer(args(no_auth=False), os_name="linux")
+    env = tmp_path / "x.env"
+    env.write_text("TM1814_PORT=8080\nTM1814_PASSWORD=keepme\n")
+    inst.paths.env_file = env
+    assert inst.password() == "keepme"
+    assert I.Installer(args(no_auth=True), os_name="linux").password() is None        # explicit --no-auth still wins

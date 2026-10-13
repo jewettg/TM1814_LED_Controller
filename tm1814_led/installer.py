@@ -15,6 +15,7 @@ import argparse
 import getpass
 import os
 import platform
+import re
 import secrets
 import shlex
 import shutil
@@ -22,6 +23,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -174,13 +176,59 @@ def cron_line(paths: Paths) -> str:
 
 # ---------------------------------------------------------------- the installer
 
-def local_ip() -> str:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
+def parse_ipv4_addresses(text: str) -> List[str]:
+    """Pull IPv4 addresses out of `ip addr`, `ifconfig` or `ipconfig` output (loopback and link-local skipped)."""
+    found: List[str] = []
+    for m in re.finditer(r"(?:inet\s+(?:addr:)?|IPv4[^\n:]*:\s*)(\d{1,3}(?:\.\d{1,3}){3})", text):
+        ip = m.group(1)
+        if not ip.startswith(("127.", "169.254.", "0.")) and ip not in found:
+            found.append(ip)
+    return found
+
+
+def rank_addresses(ips: List[str], toward: Optional[str] = None) -> List[str]:
+    """Best address first: same /24 as `toward` (the controller), then home-style ranges, then everything else.
+
+    The address a computer would use to reach the internet is often a VPN's, which other devices on the home
+    network cannot reach, so we never trust a single guess.
+    """
+    def key(ip: str):
+        parts = ip.split(".")
+        same_net = bool(toward) and ip.split(".")[:3] == str(toward).split(".")[:3]
+        private = ip.startswith("192.168.") or ip.startswith("10.") or (
+            parts[0] == "172" and 16 <= int(parts[1]) <= 31)
+        return (0 if same_net else 1, 0 if ip.startswith("192.168.") else 1 if private else 2, ip)
+    return sorted(dict.fromkeys(ips), key=key)
+
+
+def local_ips(toward: Optional[str] = None) -> List[str]:
+    """Every IPv4 address of this computer, best first (see rank_addresses)."""
+    ips: List[str] = []
+    if toward:  # the interface that routes to the controller is on the right network even when a VPN is up
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect((toward, 1))
+                ips.append(s.getsockname()[0])
+        except OSError:
+            pass
+    for cmd in (["ip", "-o", "-4", "addr", "show"], ["ifconfig"], ["ipconfig"]):
+        if shutil.which(cmd[0]):
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+            except (OSError, subprocess.SubprocessError):
+                continue
+            ips += parse_ipv4_addresses(out)
+            break
+    if not ips:
+        try:
+            ips = [i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+        except OSError:
+            pass
+    return rank_addresses([i for i in ips if not i.startswith("127.")], toward) or ["127.0.0.1"]
+
+
+def access_urls(port: int, toward: Optional[str] = None) -> List[str]:
+    return [f"http://{ip}:{port}/" for ip in local_ips(toward)]
 
 
 class Installer:
@@ -259,9 +307,22 @@ class Installer:
         if self.a.generate_password:
             self.generated = secrets.token_urlsafe(12)
             return self.generated
+        existing = self._existing_password()
+        if existing:
+            self.say("  keeping the password already set in the settings file (use --generate-password for a new one)")
+            return existing
         if sys.stdin.isatty() and not self.dry:
             typed = getpass.getpass("Password to protect the web page (Enter for none): ")
             return typed or None
+        return None
+
+    def _existing_password(self) -> Optional[str]:
+        try:
+            for line in self.paths.env_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("TM1814_PASSWORD="):
+                    return line.split("=", 1)[1].strip() or None
+        except OSError:
+            pass
         return None
 
     generated: Optional[str] = None
@@ -357,7 +418,14 @@ class Installer:
         uid = os.getuid() if hasattr(os, "getuid") else 501
         domain = f"gui/{uid}"
         self.run(["launchctl", "bootout", f"{domain}/{LAUNCHD_LABEL}"], check=False, quiet=True)
-        self.run(["launchctl", "bootstrap", domain, str(p.service_file)])
+        # bootout is asynchronous: right after it the old service may still be registered, so retry bootstrap
+        for attempt in range(6):
+            if self.run(["launchctl", "bootstrap", domain, str(p.service_file)], check=False) == 0:
+                break
+            time.sleep(1.0)
+        else:
+            raise InstallError("launchctl could not load the service; try `launchctl bootout "
+                               f"{domain}/{LAUNCHD_LABEL}` and run the installer again")
         self.run(["launchctl", "kickstart", "-k", f"{domain}/{LAUNCHD_LABEL}"], check=False)
 
     def _install_windows(self) -> None:
@@ -365,10 +433,9 @@ class Installer:
         self.run(["schtasks", "/Run", "/TN", WINDOWS_TASK], check=False)
 
     def _finish(self, password: Optional[str]) -> None:
-        url = f"http://{local_ip()}:{self.a.port}/"
         self.say("")
         self.say("Done." if not self.dry else "Dry run complete; nothing was changed.")
-        self.say(f"  Open {url} in a browser, then go to Settings to enter or find your controller.")
+        self._print_urls()
         if self.generated and self.dry:
             self.say("  A random password would be generated and shown once (any user name works with it).")
         elif self.generated:
@@ -377,6 +444,28 @@ class Installer:
             self.say("  No password is set: anyone on your network can use the page. Re-run with --generate-password to add one.")
         if self.os == "windows":
             self.say("  You may need to allow the program through Windows Firewall to reach it from other devices.")
+
+    def _print_urls(self) -> None:
+        urls = access_urls(self.a.port, self._controller_hint())
+        self.say("  Open the page in a browser (on this computer: http://localhost:%d/):" % self.a.port)
+        for i, u in enumerate(urls):
+            self.say(f"    {u}" + ("   <- most likely your home network" if i == 0 and len(urls) > 1 else ""))
+        if len(urls) > 1:
+            self.say("  Phones and other devices must use the address on your home network. If one belongs to a VPN, "
+                     "ignore it.")
+        self.say("  Then open Settings to enter or find your controller.")
+
+    def _controller_hint(self) -> Optional[str]:
+        """The controller's address (from the command line or the settings file), used to pick the right network."""
+        if getattr(self.a, "controller_host", None):
+            return self.a.controller_host
+        try:
+            for line in self.paths.env_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("TM1814_CONTROLLER_HOST="):
+                    return line.split("=", 1)[1].strip() or None
+        except OSError:
+            pass
+        return None
 
     # ---- uninstall / status
     def uninstall(self) -> int:
@@ -429,6 +518,7 @@ class Installer:
         self.say(f"  removed {path}")
 
     def service_status(self) -> int:
+        self._print_urls()
         p = self.paths
         if self.os == "linux" and has_systemd():
             ctl = ["systemctl"] if p.mode == "system" else ["systemctl", "--user"]
