@@ -3,16 +3,17 @@
 An *effect* is a kind (code) plus parameters (data). Each kind declares its parameters with `Param`, and the web
 UI builds its editor forms from that schema, so adding a kind with new parameters needs no UI work.
 
-Two families:
+Three families:
   * native effects run on the controller by themselves (one command; they keep running even if this program stops)
-  * streamed effects are rendered here, frame by frame, and painted onto the strip (needs this program running)
+  * fixed effects are a single picture painted once; the lights simply stay that way, nothing is animated
+  * animated effects are rendered here, frame by frame, and painted onto the strip (needs this program running)
 """
 from __future__ import annotations
 
 import random
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
-from ..protocol import RGB, parse_hex, to_hex
+from ..protocol import RGB, Pixel, parse_hex, to_hex
 
 
 class ParamError(ValueError):
@@ -90,8 +91,9 @@ class Effect:
     kind = ""
     label = ""
     description = ""
-    category = ""          # shown as a group in the UI
+    category = ""          # shown as a group in the UI: "Controller-native", "Fixed" or "Animated"
     native = False         # True: runs on the controller itself
+    static = False         # True: one picture painted once (a "fixed" effect); frame(0) is the picture
     previewable = True     # False: cannot be simulated here (shown without a preview)
     params: Sequence[Param] = ()
 
@@ -99,14 +101,20 @@ class Effect:
         self.p = self.clean(params or {})
         self.n = led_count
         self.rng = random.Random(seed)
+        self.preview = False   # True while rendering a browser preview (effects tied to the clock use fast steps)
         self._last_t: Optional[float] = None
         self.start()
 
     # ---- schema / validation
     @classmethod
+    def family(cls) -> str:
+        return "native" if cls.native else ("fixed" if cls.static else "animated")
+
+    @classmethod
     def schema(cls) -> dict:
         return {"kind": cls.kind, "label": cls.label, "description": cls.description, "category": cls.category,
-                "native": cls.native, "previewable": cls.previewable, "params": [p.to_dict() for p in cls.params]}
+                "family": cls.family(), "native": cls.native, "static": cls.static, "previewable": cls.previewable,
+                "params": [p.to_dict() for p in cls.params]}
 
     @classmethod
     def clean(cls, params: dict) -> dict:
@@ -134,7 +142,7 @@ class Effect:
     def colors(self, key: str) -> List[RGB]:
         return [parse_hex(c) for c in self.p[key]]
 
-    def frame(self, t: float) -> List[RGB]:  # streamed effects
+    def frame(self, t: float) -> List[Pixel]:  # animated and fixed effects
         raise NotImplementedError
 
     def apply(self, controller) -> None:  # native effects
@@ -170,12 +178,14 @@ def render_preview(kind: str, params: Optional[dict], led_count: int, seconds: f
     if not cls.previewable:
         raise ParamError(f"{cls.label} runs on the controller and cannot be previewed here")
     eff = cls(params, led_count, seed)
+    eff.preview = True
     frames = []
-    count = max(1, min(600, int(seconds * fps)))
+    count = 1 if cls.static else max(1, min(600, int(seconds * fps)))
     for k in range(count):
         px = eff.frame(k / fps)
-        frames.append("".join("%02x%02x%02x" % (int(c[0]) & 255, int(c[1]) & 255, int(c[2]) & 255) for c in px))
+        frames.append("".join("%02x%02x%02x" % tuple(int(v) & 255 for v in to_rgb(c)) for c in px))
     return frames
 
 
-from . import native, streamed, frames  # noqa: E402,F401  (import registers the kinds)
+from .util import to_rgb  # noqa: E402
+from . import native, fixed, animated, frames  # noqa: E402,F401  (import registers the kinds)

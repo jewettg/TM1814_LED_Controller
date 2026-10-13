@@ -328,7 +328,7 @@ export function frameStudio({ data, ledCount, onChange, playOnLights, getName })
   const playCard = h('section', { class: 'card stack', 'aria-label': 'Animation playback' },
     h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, 'Play the animation'), stale, h('span', { class: 'spacer' }), playAnim, pauseAnim, lightsBtn),
     pv.el,
-    h('p', { class: 'help' }, 'Play animation asks the program to render the whole animation (about 10 frames per second, up to one minute) and plays it here. On the lights it runs as a streamed effect.'));
+    h('p', { class: 'help' }, 'Play animation asks the program to render the whole animation (about 10 frames per second, up to one minute) and plays it here. On the lights it runs as an animated effect.'));
 
   // ------------------------------------------------------------ refresh logic
   function drawStrip() { view.set(renderFrame(frame(), d.background, n)); }

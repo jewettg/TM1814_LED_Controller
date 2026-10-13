@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* **Fixed effects** (a third family next to controller-native and animated): a picture painted once that simply
+  stays lit. New kind *Every Nth pixel* with the white-LED option; the catalog gains **Night (Bright / Medium / Low /
+  Dim)** (every 3rd / 4th / 5th / 6th pixel).
+* "Streamed" is now called **Animated**. New animated kind *Every Nth pixel, stepping* and the effect
+  **Night (Hourly 4-6)**: the spacing steps 4, 5, 6 and loops, changing on the hour by the clock.
+* White-LED pixels in the frame painter (follow master brightness, never quantized).
+
 * **Login page** with a session cookie replaces HTTP Basic (browsers handled it badly). A password is now **always**
   required: the installer sets one and `serve` refuses to start without one. Log out link, login throttling,
   no-cache headers.

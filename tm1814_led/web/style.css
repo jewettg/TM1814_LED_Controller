@@ -21,8 +21,10 @@
   --info-soft: #e8f1fb;
   --native: #7c3aed;
   --native-soft: #f0e8fd;
-  --streamed: #0b7a75;
-  --streamed-soft: #dff4f2;
+  --animated: #0b7a75;
+  --animated-soft: #dff4f2;
+  --fixed: #a15c00;
+  --fixed-soft: #fdf0d8;
   --strip-bg: #0d1117;            /* LED previews are always on a dark strip so colors read correctly */
   --focus: #f59e0b;
 
@@ -162,7 +164,8 @@ input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--primary)
 /* badges */
 .badge { display: inline-block; padding: 2px 9px; border-radius: 11px; font-size: .78rem; font-weight: 700; white-space: nowrap; }
 .badge.native { background: var(--native-soft); color: var(--native); }
-.badge.streamed { background: var(--streamed-soft); color: var(--streamed); }
+.badge.animated { background: var(--animated-soft); color: var(--animated); }
+.badge.fixed { background: var(--fixed-soft); color: var(--fixed); }
 .badge.ok { background: var(--success-soft); color: var(--success); }
 .badge.bad { background: var(--danger-soft); color: var(--danger); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }

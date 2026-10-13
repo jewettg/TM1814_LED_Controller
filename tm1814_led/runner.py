@@ -255,6 +255,7 @@ class Runner:
         self._skip = False
         duration = item["duration"]
         self.item_status = {"index": idx, "count": len(plan["items"]), "name": item["name"], "kind": item["kind"],
+                            "family": eff.family(),
                             "effect_id": item.get("effect_id"),
                             "native": eff.native, "duration": duration, "elapsed": 0.0}
         log.info("effect: %s", item["name"])
@@ -293,7 +294,17 @@ class Runner:
                     applied = self._powered_on and applied and self._state_ok
                 time.sleep(0.2)
                 continue
-            # streamed effect
+            if eff.static:   # fixed effect: paint the picture once, then only watch that it stays
+                if not applied:
+                    applied = self._guard("paint picture", lambda: self._paint_once(eff), gen)
+                    continue
+                if now - last_health >= HEALTH_INTERVAL:
+                    last_health = now
+                    self._health(eff, gen, native=False)
+                    applied = applied and self._state_ok
+                time.sleep(0.2)
+                continue
+            # animated effect
             if not in_frames:
                 in_frames = self._guard("start frames", self.ctrl.start_frames, gen)
                 if not in_frames:
@@ -316,6 +327,10 @@ class Runner:
             spare = period - (time.monotonic() - t0)
             if spare > 0:
                 time.sleep(spare)
+
+    def _paint_once(self, eff: fx.Effect) -> None:
+        self.ctrl.start_frames()
+        self.ctrl.show_frame(eff.frame(0.0), force_full=True)
 
     _state_ok = True
 

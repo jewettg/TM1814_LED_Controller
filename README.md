@@ -11,7 +11,7 @@ Perfect for eave lights, roof lines and permanent holiday lighting that was inst
 ## What you get
 
 * **A web page** you can open on your phone or computer.
-* **A catalog of 48 ready-made effects** — solid colors, all 24 of the controller's built-in animations, and Halloween scenes (embers, ghost, rolling wave, three kinds of lightning) plus rainbow, candy cane, twinkle, sunset gradient and more.
+* **A catalog of 53 ready-made effects** — solid colors, all 24 of the controller's built-in animations, and Halloween scenes (embers, ghost, rolling wave, three kinds of lightning) plus rainbow, candy cane, twinkle, sunset gradient and more.
 * **A full editor for every effect** — change speed, colors, direction, size, anything. Duplicate, rename, delete. A live preview shows what it will look like before you send it to the lights.
 * **A frame studio** to draw your own animations frame by frame, with gradients, fades, loops and undo.
 * **Run lists** — an ordered playlist of effects with how long each plays. Loop or shuffle them.
@@ -83,17 +83,20 @@ What is playing right now, with a progress bar; **Play / Stop / Next / Pause**; 
 
 Every effect as a card. Search, or filter by type. On each card: **Play on lights**, **Edit**, **Duplicate**, **Rename**, **Delete**. **New effect** lets you start from any kind.
 
-There are two families, and the page labels them:
+There are three kinds, and the page labels each one:
 
-| | **Controller-native** | **Streamed** |
-| --- | --- | --- |
-| Where it runs | On the controller itself | In this program, which sends frames to the lights |
-| If this program stops | Keeps running | Freezes on its last frame |
-| Motion | Perfectly smooth | About 3–5 frames per second |
-| Preview in the browser | No (it is the controller's own animation) | Yes |
-| Examples | Solid colors, Horse Racing, Cycle, Twinkling Stars and the other built-in animations | Embers, Ghost, Lightning, Rainbow, your own frame animations |
+| | **Controller-native** | **Fixed** | **Animated** |
+| --- | --- | --- | --- |
+| What it is | One of the controller's own effects | A still picture: some lights on, the rest off | Motion drawn by this program, frame by frame |
+| Where it runs | On the controller itself | Painted once by this program, then the lights just stay that way | In this program, which keeps sending frames |
+| If this program stops | Keeps running | **Stays lit** | Freezes on its last frame |
+| Motion | Perfectly smooth | None | About 3–5 frames per second |
+| Preview in the browser | No (it is the controller's own animation) | Yes | Yes |
+| Examples | Solid colors, Horse Racing, Cycle, Twinkling Stars and the other built-in animations | **Night (Bright / Medium / Low / Dim)**: every 3rd / 4th / 5th / 6th pixel lit | Embers, Ghost, Lightning, Rainbow, **Night (Hourly 4-6)**, your own frame animations |
 
-Use native effects for fast, smooth motion and streamed ones when you want something the controller can't do on its own.
+Use native effects for fast, smooth motion, fixed effects for steady night lighting, and animated ones when you want something the controller can't do on its own.
+
+**Night lights.** The catalog comes with four fixed night effects that light every 3rd, 4th, 5th or 6th pixel with the strip's white LED (a bigger number means fewer lights, so a dimmer glow), and **Night (Hourly 4-6)**, an animated one that steps through every 4th, 5th and 6th pixel, changing on the hour and looping. Open any of them to change the color, the white brightness, which pixel starts the pattern, or (for the hourly one) the range and how often it changes.
 
 ### The effect editor
 
@@ -218,7 +221,7 @@ Your data is kept.
 It makes every pixel black. The power supply and the pixels' chips stay powered, so there is a small standby draw. Only switching the supply's AC input removes it completely.
 
 **Why aren't my custom animations as smooth as the built-in ones?**
-Built-in animations run *inside* the controller. Custom and streamed ones are sent from here, and the controller accepts only about 30 small commands per second (sending faster makes it stall). A busy frame with many colors needs many commands, so rainbows and gradients are limited to about 2–3 frames per second and are slightly banded. Simple scenes run at around 5.
+Built-in animations run *inside* the controller. Custom and animated ones are sent from here, and the controller accepts only about 30 small commands per second (sending faster makes it stall). A busy frame with many colors needs many commands, so rainbows and gradients are limited to about 2–3 frames per second and are slightly banded. Simple scenes run at around 5.
 
 **Both outputs show the same thing — can I set them separately?**
 Not with what is known about this controller; both outputs receive identical data.
@@ -260,7 +263,7 @@ tm1814-led status               # what's playing, controller state, next schedul
 | --- | --- |
 | **Talk to the service** | |
 | `status` | what is playing, controller connection, active and upcoming schedules |
-| `effects [text]` | list the catalog (`--native` / `--streamed` to filter) |
+| `effects [text]` | list the catalog (`--native` / `--fixed` / `--animated` to filter) |
 | `runlists`, `schedules` | list run lists, and schedules with their next start |
 | `play "name"` | play an effect or run list by name, part of a name, or id (`--effect` / `--runlist` to be specific, `--for 120` to stop an effect after two minutes) |
 | `stop`, `next`, `pause`, `resume` | control playback (`stop` turns the lights off unless you chose another "when idle" action) |

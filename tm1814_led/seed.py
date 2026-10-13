@@ -53,6 +53,12 @@ def _effects() -> List[Dict[str, Any]]:
         {"colors": ["#003cff", "#00c8ff", "#00ffb4"], "period": 14})
     add("team-colors", "Team colors (burnt orange and white)", "chase",
         {"colors": ["#bf5700", "#ffffff"], "block": 12, "speed": 8})
+    for key, name, every, desc in (("bright", "Bright", 3, "every 3rd pixel"), ("medium", "Medium", 4, "every 4th pixel"),
+                                   ("low", "Low", 5, "every 5th pixel"), ("dim", "Dim", 6, "every 6th pixel")):
+        add(f"night-{key}", f"Night ({name})", "nth", {"every": every},
+            f"Fixed night light: the white LED on {desc}, nothing animated.")
+    add("night-hourly", "Night (Hourly 4-6)", "nth_step", {},
+        "Every 4th pixel for an hour, then every 5th, then every 6th, then back to 4th (changes on the hour).")
     add("custom-alternate", "Custom example - Red/blue alternate", "frames", {},
         "Two-frame animation made in the frame editor; open it to see how it works.")
     return e

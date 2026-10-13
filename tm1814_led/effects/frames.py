@@ -75,7 +75,7 @@ def _clean_data(value: Any) -> dict:
 class CustomFrames(Effect):
     kind = "frames"
     label = "Custom animation (frames)"
-    category = "Streamed"
+    category = "Animated"
     description = ("Your own animation: a list of frames, each made of colored (or gradient) ranges of LEDs, "
                    "with per-frame durations and optional fades. Built in the frame editor.")
     params = (Param("data", "Animation", "frames", DEFAULT_DATA),)

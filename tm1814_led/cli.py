@@ -167,7 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
     e = add("effects", "list the effects in the catalog", [svc], "service")
     e.add_argument("search", nargs="?", default="", help="only names containing this text")
     e.add_argument("--native", action="store_true", help="only controller-native effects")
-    e.add_argument("--streamed", action="store_true", help="only streamed effects")
+    e.add_argument("--fixed", action="store_true", help="only fixed effects (still pictures)")
+    e.add_argument("--animated", action="store_true", help="only animated effects")
     add("runlists", "list run lists", [svc], "service")
     add("schedules", "list schedules with their next start", [svc], "service")
     pl = add("play", "play an effect or run list by name (or id)", [svc], "service")
@@ -315,19 +316,21 @@ def cmd_status(a, out: Out) -> int:
 def cmd_effects(a, out: Out) -> int:
     cl = _service(a, out)
     effects, kinds = cl.get("/api/effects"), {k["kind"]: k for k in cl.get("/api/effect-kinds")}
+    wanted = {f for f, on in (("native", a.native), ("fixed", a.fixed), ("animated", a.animated)) if on}
+    names = {"native": "Controller-native", "fixed": "Fixed", "animated": "Animated"}
     rows = []
     for e in effects:
-        native = kinds.get(e["kind"], {}).get("native", False)
+        k = kinds.get(e["kind"], {})
+        family = k.get("family", "animated")
         if a.search and a.search.lower() not in e["name"].lower():
             continue
-        if (a.native and not native) or (a.streamed and native):
+        if wanted and family not in wanted:
             continue
-        rows.append((e["id"], e["name"], kinds.get(e["kind"], {}).get("label", e["kind"]),
-                     "controller" if native else "streamed"))
+        rows.append((e["id"], e["name"], k.get("label", e["kind"]), family))
     if a.json:
-        out.json([dict(zip(("id", "name", "kind", "runs_on"), r)) for r in rows])
+        out.json([dict(zip(("id", "name", "kind", "family"), r)) for r in rows])
     else:
-        out.table(("ID", "NAME", "KIND", "RUNS ON"), rows)
+        out.table(("ID", "NAME", "KIND", "TYPE"), [(i, n, k, names[f]) for i, n, k, f in rows])
         out.say(out.p(f"{len(rows)} effect(s). Play one with: tm1814-led play \"name\"", "dim"))
     return 0
 
@@ -473,7 +476,7 @@ def cmd_state(a, out: Out) -> int:
     if a.json:
         out.json({**st.to_dict(), "host": ctrl.host})
         return 0
-    showing = {0x66: "per-pixel scene (a streamed effect)", 0x61: "a solid color"}.get(st.pattern, f"built-in animation/scene {st.pattern}")
+    showing = {0x66: "per-pixel picture (a fixed or animated effect)", 0x61: "a solid color"}.get(st.pattern, f"built-in animation/scene {st.pattern}")
     out.kv([("Controller", ctrl.host), ("Power", out.p("on", "green") if st.power else out.p("off", "dim")),
             ("Showing", showing if st.power else "-"), ("Color", f"hue {st.hue}°, saturation {st.saturation}%, brightness {st.value}%"),
             ("LEDs", str(st.led_count)), ("Model / firmware", f"{st.model} / {st.version}")])

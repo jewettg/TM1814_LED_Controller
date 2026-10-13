@@ -63,7 +63,7 @@ For installation and everyday use, see [README.md](README.md).
 | --- | --- |
 | `protocol.py` | Pure functions: build and parse bytes. No sockets. Fully unit-tested against hardware-verified byte strings. |
 | `controller.py` | `Controller` (real TCP client), `SimulatedController` (same interface, no network), `discover()` (UDP). Pacing, reconnect, diff painting. |
-| `effects/` | Effect kinds. `native.py` (run on the controller), `streamed.py` (rendered here), `frames.py` (custom animations). |
+| `effects/` | Effect kinds. `native.py` (run on the controller), `fixed.py` (a still picture painted once), `animated.py` (rendered frame by frame), `frames.py` (custom animations). |
 | `db.py` | SQLite storage and validation (effects, run lists, schedules, settings). |
 | `seed.py` | The default catalog and run lists. |
 | `scheduler.py` | Pure functions: schedule validation, date rules, windows, sun times, choosing the active schedule. |
@@ -231,7 +231,7 @@ The controller renders these itself, smoothly, and keeps running them with no ho
 
 ### 5.5 Per-pixel mode — `E1 23` (init) and `E1 26` (paint)
 
-This is how streamed effects work.
+This is how fixed and animated effects work.
 
 **Init** — Verified:
 
@@ -300,11 +300,15 @@ Implemented in `controller.py` (`show_frame`) and `runner.py`.
 
 Native effects (`solid`, `segments`, `builtin`) send one command; the runner then only waits and health-checks.
 
+**Fixed effects** (`static = True`, e.g. `nth`) are painted **once** (`E1 23` + the paint commands for `frame(0)`), after which nothing is sent: the controller keeps showing the picture, even if this program stops. The runner only health-checks every 30 s and repaints if the controller reports power off or has left per-pixel mode (for example after a power cut). A fixed effect needs two paint commands at most (one color for the lit pixels, one for the rest).
+
+**Pixel types.** A frame is a list of pixels; a pixel is `(r, g, b)` or `(0, 0, 0, level)`, which lights only the **white LED** of the RGBW pixel at `level` 0–100 (sent as an `E1 26` paint in white mode). White pixels follow master brightness, are never quantized, and are drawn as a warm white in previews.
+
 ---
 
 ## 8. Effects
 
-An effect = **kind** (code, `effects/`) + **parameters** (JSON in the database).
+An effect = **kind** (code, `effects/`) + **parameters** (JSON in the database). Every kind belongs to one of three **families** (`family` in `/api/effect-kinds`): `native` (runs on the controller), `fixed` (a still picture, painted once) or `animated` (rendered frame by frame by this program).
 
 ### 8.1 Kinds
 
@@ -313,23 +317,25 @@ An effect = **kind** (code, `effects/`) + **parameters** (JSON in the database).
 | `solid` | native | yes | color; or use the white LED + level |
 | `segments` | native | yes | 1–20 colors repeated to fill 20 segments |
 | `builtin` | native | no | pattern, 1–8 colors, speed, density, direction, variant |
-| `embers` | streamed | yes | color, hot color, block size, dimmest level, flicker |
-| `wave` | streamed | yes | two colors, wavelength, period, floor/strength, direction |
-| `comet` | streamed | yes | color, background, tail length, speed, gap, bounce, direction |
-| `lightning` | streamed | yes | base, bolt colors, big-flash colors, bolts/s, bolt width range, life range, flicker, big flashes/min |
-| `twinkle` | streamed | yes | base, sparkle colors, sparkles/s, life |
-| `rainbow` | streamed | yes | length, period, saturation, brightness, direction |
-| `breathe` | streamed | yes | colors, period, dimmest level |
-| `chase` | streamed | yes | block colors, gap color, block size, gap, speed, direction |
-| `wipe` | streamed | yes | color, background, period, direction |
-| `gradient` | streamed | yes | 2–12 colors, length, period, direction |
-| `frames` | streamed | yes | custom frame animation (8.3) |
+| `embers` | animated | yes | color, hot color, block size, dimmest level, flicker |
+| `wave` | animated | yes | two colors, wavelength, period, floor/strength, direction |
+| `comet` | animated | yes | color, background, tail length, speed, gap, bounce, direction |
+| `lightning` | animated | yes | base, bolt colors, big-flash colors, bolts/s, bolt width range, life range, flicker, big flashes/min |
+| `twinkle` | animated | yes | base, sparkle colors, sparkles/s, life |
+| `rainbow` | animated | yes | length, period, saturation, brightness, direction |
+| `breathe` | animated | yes | colors, period, dimmest level |
+| `chase` | animated | yes | block colors, gap color, block size, gap, speed, direction |
+| `wipe` | animated | yes | color, background, period, direction |
+| `gradient` | animated | yes | 2–12 colors, length, period, direction |
+| `frames` | animated | yes | custom frame animation (8.3) |
+| `nth` | **fixed** | yes (1 frame) | light every Nth pixel: N, first lit pixel, white LED on/off + level, color, background |
+| `nth_step` | animated | yes | like `nth`, but N steps through `first`..`last` (default 4, 5, 6) every `change_minutes` (default 60), by the clock or by elapsed time |
 
 `GET /api/effect-kinds` returns the full schema. The web UI builds its editor forms from it.
 
 ### 8.2 Adding a new kind
 
-Create a class in `effects/streamed.py` (or a new module imported at the bottom of `effects/__init__.py`):
+Create a class in `effects/animated.py` (or a new module imported at the bottom of `effects/__init__.py`):
 
 ```python
 from . import Effect, Param, register
@@ -339,7 +345,7 @@ from .util import scale
 class Pulse(Effect):
     kind = "pulse"                      # stored in the database
     label = "Pulse"                     # shown in the UI
-    category = "Streamed"               # "Controller-native" for effects that run on the controller
+    category = "Animated"               # "Controller-native" (runs on the controller) or "Fixed" (a still picture: set static = True)
     description = "Every LED pulses together."
     params = (
         Param("color", "Color", "color", "#ff0000"),
@@ -407,7 +413,7 @@ schedules(id, name UNIQUE NOCASE, runlist_id → runlists RESTRICT, enabled, pri
 | `controller_host` | `""` | controller IP or host name; empty = not configured |
 | `controller_port` | 5577 | |
 | `led_count` | 0 | 0 = use the controller's reported count; otherwise override (≤255) |
-| `fps` | 5 | target frames/s for streamed effects (1–15) |
+| `fps` | 5 | target frames/s for animated effects (1–15) |
 | `min_gap_ms` | 30 | pause between commands (5–500) |
 | `max_groups` | 10 | max distinct colors per frame (2–30) |
 | `brightness` | 100 | master brightness, 0–100 |
@@ -488,7 +494,7 @@ plan = { source: "manual" | "schedule:<id>", name, runlist_id, loop, shuffle, wi
 * `next()` skips the current item; `pause()` freezes the item clock (the strip holds its last frame).
 * Replacing a plan bumps a generation counter; the worker notices on its next iteration (≤ ~0.25 s).
 * The **idle action** runs when a plan finishes, a schedule window ends, or Stop is pressed: `off` (power off), `leave` (do nothing), `solid` (power on, show `idle_color`). The *power* endpoint stops the plan without an idle action.
-* Changing settings (`apply_settings`) updates pacing/brightness live; a brightness change repaints streamed frames and re-applies native effects.
+* Changing settings (`apply_settings`) updates pacing/brightness live; a brightness change repaints animated frames and re-applies native effects.
 
 Status payload (`GET /api/status`) includes `state` (`idle`/`running`/`paused`), `source`, `plan`, `item` (`index`, `count`, `name`, `kind`, `native`, `duration`, `elapsed`), `fps_target`, `fps_actual`, a `controller` block (host, port, connected, `led_count`, `last_error`, `commands_per_second`, `commands_sent`, `brightness`, `power`, `model`, `firmware`, `simulated`), `uptime_sec`, `version`, `active_schedule`, `upcoming` (next windows), `needs_setup`, and `has_location`.
 
@@ -626,7 +632,7 @@ tm1814-led serve [--host ADDR] [--port N] [--data-dir DIR] [--controller-host IP
 tm1814-led install|uninstall|service      same as --install / --uninstall / --service-status (section 14)
 
  service commands (via the running web service):
-tm1814-led status | effects [text] [--native|--streamed] | runlists | schedules
+tm1814-led status | effects [text] [--native|--fixed|--animated] | runlists | schedules
 tm1814-led play NAME [--effect|--runlist] [--for SECONDS] | stop | next | pause | resume
 tm1814-led brightness 0-100 | logs [-n N] [-f]
  direct commands (straight to the controller; sign-in still required):
@@ -681,9 +687,9 @@ The streaming engine was also exercised against real hardware through the runnin
 
 ## 17. Known limits and open questions
 
-* **Frame rate.** About 3–5 frames/s for ordinary streamed effects, lower for busy gradients, because every distinct color costs a command and commands are paced at ~30/s. Use native effects for smooth fast motion.
+* **Frame rate.** About 3–5 frames/s for ordinary animated effects, lower for busy gradients, because every distinct color costs a command and commands are paced at ~30/s. Use native effects for smooth fast motion.
 * **Banding.** Frames needing more than `max_groups` colors are quantized. Raising `max_groups` improves fidelity at the cost of frame rate.
-* **Streamed effects need this program running**; native ones do not. If the program stops, a streamed effect freezes on its last frame (the controller does not time it out — Inferred, not tested).
+* **Animated effects need this program running**; native and fixed ones do not (a fixed effect is painted once and the controller holds it). If the program stops, an animated effect freezes on its last frame (the controller does not time it out — Inferred, not tested).
 * **Native effects cannot be previewed** (the controller's renderer is a black box), only played.
 * **Both outputs always show the same thing.** Independent control of the two outputs is not known to be possible.
 * **IC type, color order, pixel count (write) and segment layout cannot be read or changed** with the commands this project knows. The count is read from state byte 18.

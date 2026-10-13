@@ -90,7 +90,7 @@ export async function settings(ctx) {
         h('div', { class: 'form-grid' },
           num('led_count', 'Number of LEDs', '0 means ask the controller (usually 250 per output).', { min: 0, max: 255 }),
           num('brightness', 'Master brightness (%)', 'Scales everything the lights show.', { min: 0, max: 100 }),
-          num('fps', 'Frames per second', 'For streamed effects. Higher is smoother but sends more commands (1 to 15).', { min: 1, max: 15 }),
+          num('fps', 'Frames per second', 'For animated effects. Higher is smoother but sends more commands (1 to 15).', { min: 1, max: 15 }),
           num('min_gap_ms', 'Pause between commands (ms)', 'Raise this if the controller drops commands.', { min: 5, max: 500 }),
           num('max_groups', 'Most colors per frame', 'Each distinct color in a frame costs one command (2 to 30).', { min: 2, max: 30 })),
         h('div', { class: 'form-grid' },

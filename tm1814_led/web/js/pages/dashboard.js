@@ -127,7 +127,7 @@ export async function dashboard(ctx) {
     npSub.textContent = playing ? (it.name ? 'Now: ' + it.name : '') : 'Pick a run list, an effect, or a color to start.';
     render(npBadges,
       playing ? h('span', { class: 'badge ' + (st.state === 'paused' ? 'warn' : 'ok') }, st.state === 'paused' ? 'Paused' : 'Running') : h('span', { class: 'badge gray' }, 'Idle'),
-      playing && it.name ? kindBadge(it.native) : null,
+      playing && it.name ? kindBadge(it.family) : null,
       playing && st.source ? h('span', { class: 'badge info', title: 'Who started this' }, st.source === 'schedule' ? 'From schedule' : 'Started manually') : null);
     if (playing && it.duration) {
       const pct = Math.min(100, 100 * (it.elapsed || 0) / it.duration);

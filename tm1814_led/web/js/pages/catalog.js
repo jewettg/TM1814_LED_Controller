@@ -38,26 +38,25 @@ export async function catalog(ctx) {
 
   function chips() {
     const used = [...new Set(effects.map((e) => e.kind))];
-    const items = [['all', 'All'], ['native', 'Controller-native'], ['streamed', 'Streamed'], ...used.map((k) => ['kind:' + k, (kindMap[k] || { label: k }).label])];
+    const items = [['all', 'All'], ['native', 'Controller-native'], ['fixed', 'Fixed'], ['animated', 'Animated'], ...used.map((k) => ['kind:' + k, (kindMap[k] || { label: k }).label])];
     render(chipsEl, items.map(([key, label]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter === key), onclick: () => { filter = key; chips(); draw(); } }, label)));
   }
 
   function matches(e) {
-    const k = kindMap[e.kind] || { native: false, label: e.kind };
-    if (filter === 'native' && !k.native) return false;
-    if (filter === 'streamed' && k.native) return false;
+    const k = kindMap[e.kind] || { family: 'animated', label: e.kind };
+    if (['native', 'fixed', 'animated'].includes(filter) && k.family !== filter) return false;
     if (filter.startsWith('kind:') && e.kind !== filter.slice(5)) return false;
     if (search && !(e.name.toLowerCase().includes(search) || k.label.toLowerCase().includes(search) || (e.description || '').toLowerCase().includes(search))) return false;
     return true;
   }
 
   function card(e) {
-    const k = kindMap[e.kind] || { native: false, previewable: false, label: e.kind };
+    const k = kindMap[e.kind] || { family: 'animated', native: false, previewable: false, label: e.kind };
     const canvas = h('canvas', { class: 'thumb', 'aria-hidden': 'true' });
     const prev = h('div', { class: 'preview' + (k.previewable ? '' : ' static') }, k.previewable ? canvas : 'Runs on the controller (no preview)');
     const el = h('article', { class: 'card effect-card', 'aria-label': e.name },
       h('div', { class: 'title' }, e.name),
-      h('div', { class: 'row tight' }, kindBadge(k.native), h('span', { class: 'badge gray' }, k.label)),
+      h('div', { class: 'row tight' }, kindBadge(k.family), h('span', { class: 'badge gray' }, k.label)),
       prev,
       e.description ? h('div', { class: 'help' }, e.description) : null,
       h('div', { class: 'card-actions' },
@@ -120,12 +119,16 @@ export async function catalog(ctx) {
     count.textContent = shown.length + ' of ' + effects.length + ' effects';
     if (!effects.length) { render(grid, emptyState('No effects yet.', h('button', { class: 'primary', type: 'button', onclick: newEffect }, 'New effect'))); return; }
     if (!shown.length) { render(grid, emptyState('No effects match your search or filter.')); return; }
-    const groups = [['Controller-native', shown.filter((e) => (kindMap[e.kind] || {}).native)], ['Streamed', shown.filter((e) => !(kindMap[e.kind] || {}).native)]];
+    const groups = [['Controller-native', shown.filter((e) => (kindMap[e.kind] || {}).family === 'native')],
+      ['Fixed', shown.filter((e) => (kindMap[e.kind] || {}).family === 'fixed')],
+      ['Animated', shown.filter((e) => ((kindMap[e.kind] || {}).family || 'animated') === 'animated')]];
     render(grid, groups.filter(([, l]) => l.length).map(([name, list]) => h('section', null,
       h('h2', { class: 'section-title' }, name + ' (' + list.length + ')'),
-      h('p', { class: 'help', style: { marginTop: '-8px' } }, name === 'Controller-native'
-        ? 'These run on the controller itself and keep going even if this program stops. Built-in animations cannot be previewed here.'
-        : 'These are drawn by this program at about 5 frames per second and need it running. Previews are shown below.'),
+      h('p', { class: 'help', style: { marginTop: '-8px' } }, ({
+        'Controller-native': 'These run on the controller itself and keep going even if this program stops. Built-in animations cannot be previewed here.',
+        'Fixed': 'Still pictures: painted once and left that way. Nothing moves, and they stay lit even if this program stops.',
+        'Animated': 'These are drawn by this program at about 5 frames per second and need it running. Previews are shown below.',
+      })[name]),
       h('div', { class: 'card-grid' }, list.map(card)))));
   }
 
@@ -136,10 +139,10 @@ export async function catalog(ctx) {
 
   function newEffect() {
     const body = h('div', null, h('p', { class: 'muted' }, 'Pick the type of effect to create. You can adjust every setting afterwards.'),
-      ...['Controller-native', 'Streamed'].map((cat) => h('div', null, h('h3', null, cat),
-        kinds.filter((k) => k.category === cat || (cat === 'Streamed' && k.category !== 'Controller-native' && !k.native)).map((k) =>
+      ...['Controller-native', 'Fixed', 'Animated'].map((cat) => h('div', null, h('h3', null, cat),
+        kinds.filter((k) => k.category === cat).map((k) =>
           h('button', { type: 'button', class: 'kind-option', onclick: () => { m.close(); go('#/effect/new?kind=' + encodeURIComponent(k.kind)); } },
-            h('strong', null, k.label, kindBadge(k.native)), h('span', { class: 'd' }, k.description))))));
+            h('strong', null, k.label, kindBadge(k.family)), h('span', { class: 'd' }, k.description))))));
     const m = modal('New effect', body, { wide: true });
   }
 

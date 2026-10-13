@@ -145,11 +145,16 @@ export function fmtClock(ts) {
 export function pageHead(title, ...actions) {
   return h('div', { class: 'page-head' }, h('h1', null, title), h('div', { class: 'actions' }, ...actions));
 }
-export function kindBadge(native) {
-  return h('span', { class: 'badge ' + (native ? 'native' : 'streamed'), title: native
-    ? 'Runs on the controller itself; keeps running even if this program stops.'
-    : 'Rendered by this program (about 5 frames per second); needs it running.' },
-  native ? 'Controller-native' : 'Streamed');
+const FAMILY_BADGE = {
+  native: ['Controller-native', 'Runs on the controller itself; keeps running even if this program stops.'],
+  fixed: ['Fixed', 'A still picture painted once; the lights simply stay that way (no animation).'],
+  animated: ['Animated', 'Rendered by this program (about 5 frames per second); needs it running.'],
+};
+// family: 'native' | 'fixed' | 'animated' (a boolean is accepted too: true = native)
+export function kindBadge(family) {
+  const f = family === true ? 'native' : (family === false || !family ? 'animated' : family);
+  const [label, title] = FAMILY_BADGE[f] || FAMILY_BADGE.animated;
+  return h('span', { class: 'badge ' + f, title }, label);
 }
 export function emptyState(text, ...actions) { return h('div', { class: 'empty' }, h('p', null, text), ...actions); }
 export function loading(text = 'Loading...') { return h('div', { class: 'loading' }, text); }

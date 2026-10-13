@@ -34,3 +34,14 @@ def palette(colors: Sequence[RGB], pos: float) -> RGB:
     x = (pos % 1.0) * n
     i = int(x)
     return lerp(colors[i % n], colors[(i + 1) % n], x - i)
+
+
+WHITE_LED_LOOK = (255, 241, 222)   # roughly what the warm white LED looks like, for previews
+
+
+def to_rgb(px) -> RGB:
+    """An (r, g, b) for drawing any pixel; a white-LED pixel (0, 0, 0, level) becomes a warm white."""
+    if len(px) == 4:
+        k = max(0, min(100, px[3])) / 100.0
+        return (int(WHITE_LED_LOOK[0] * k), int(WHITE_LED_LOOK[1] * k), int(WHITE_LED_LOOK[2] * k))
+    return (px[0], px[1], px[2])

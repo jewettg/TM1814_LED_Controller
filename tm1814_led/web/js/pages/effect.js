@@ -106,7 +106,7 @@ export async function effectEditor(ctx) {
   }) }, 'Delete');
 
   const head = h('div', { class: 'page-head' }, h('h1', null, isNew ? 'New effect' : 'Edit effect'),
-    h('div', { class: 'row' }, kindBadge(schema.native), h('span', { class: 'badge gray' }, schema.label), dirtyBadge));
+    h('div', { class: 'row' }, kindBadge(schema.family), h('span', { class: 'badge gray' }, schema.label), dirtyBadge));
   const nameCard = h('div', { class: 'card', style: { marginBottom: 'var(--space-4)' } },
     h('div', { class: 'form-grid' },
       h('div', null, h('label', { class: 'field-label', for: nameId }, 'Name'), nameIn),

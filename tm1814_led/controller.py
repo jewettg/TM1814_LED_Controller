@@ -15,7 +15,7 @@ import time
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import protocol as P
-from .protocol import RGB, State
+from .protocol import RGB, Pixel, State
 
 log = logging.getLogger("tm1814.controller")
 
@@ -24,9 +24,11 @@ class ControllerError(Exception):
     """The controller could not be reached or a send failed."""
 
 
-def quantize(rgb: RGB, step: int) -> RGB:
-    """Round each channel to a multiple of `step` (0 stays 0, nonzero never rounds down to 0)."""
-    if step <= 1:
+def quantize(rgb: Pixel, step: int) -> Pixel:
+    """Round each channel to a multiple of `step` (0 stays 0, nonzero never rounds down to 0).
+
+    A white-LED pixel (0, 0, 0, level) is never rounded: there are only a handful of white levels in practice."""
+    if step <= 1 or len(rgb) == 4:
         return rgb
     out = []
     for c in rgb:
@@ -38,13 +40,13 @@ def quantize(rgb: RGB, step: int) -> RGB:
     return (out[0], out[1], out[2])
 
 
-def group_by_color(items: Dict[int, RGB], max_groups: int) -> Dict[RGB, List[int]]:
+def group_by_color(items: Dict[int, Pixel], max_groups: int) -> Dict[Pixel, List[int]]:
     """Group pixel indices by color, coarsening the quantization until at most `max_groups` colors remain.
 
     Every distinct color costs one paint command, and commands are the scarce resource, so busy frames get
     slightly coarser colors instead of slowing the animation down.
     """
-    groups: Dict[RGB, List[int]] = {}
+    groups: Dict[Pixel, List[int]] = {}
     for step in (1, 4, 8, 16, 32, 48, 64, 96):
         groups = {}
         for idx, rgb in items.items():
@@ -75,7 +77,7 @@ class Controller:
         self._counter = 0
         self._last_send = 0.0
         self._since_drain = 0
-        self._shown: Optional[List[RGB]] = None    # what the strip currently shows (for diffing)
+        self._shown: Optional[List[Pixel]] = None  # what the strip currently shows (for diffing)
         self._in_scribble = False
         self._last_full = 0.0
         self._rate_window: List[float] = []
@@ -219,8 +221,8 @@ class Controller:
             return None
 
     # ------------------------------------------------------------ high level
-    def _scale(self, rgb: RGB) -> RGB:
-        return rgb if self.brightness >= 100 else P.scale_rgb(rgb, self.brightness)
+    def _scale(self, px: Pixel) -> Pixel:
+        return px if self.brightness >= 100 else P.scale_pixel(px, self.brightness)
 
     def power(self, on: bool) -> None:
         with self._lock:
@@ -261,12 +263,12 @@ class Controller:
             self._in_scribble = True
             self._shown = None
 
-    def show_frame(self, colors: Sequence[RGB], force_full: bool = False) -> int:
-        """Display one frame (one RGB tuple per LED). Sends only changed pixels. Returns commands sent."""
+    def show_frame(self, colors: Sequence[Pixel], force_full: bool = False) -> int:
+        """Display one frame (one pixel per LED: (r, g, b), or (0, 0, 0, level) for the white LED). Sends only changed pixels. Returns commands sent."""
         n = self.led_count
         if len(colors) < n:
             colors = list(colors) + [(0, 0, 0)] * (n - len(colors))
-        frame = [self._scale(tuple(c)) for c in colors[:n]]  # type: ignore[misc]
+        frame = [self._scale(tuple(c)) for c in colors[:n]]
         sent = 0
         with self._lock:
             now = time.monotonic()
@@ -280,8 +282,11 @@ class Controller:
                 shown = self._shown or []
                 changed = {i: c for i, c in enumerate(frame) if shown[i] != c}
             if changed:
-                for rgb, idx in group_by_color(changed, self.max_groups).items():
-                    self.send_inner(P.scribble_paint_message(idx, n, rgb=rgb))
+                for px, idx in group_by_color(changed, self.max_groups).items():
+                    if len(px) == 4:
+                        self.send_inner(P.scribble_paint_message(idx, n, white=px[3]))
+                    else:
+                        self.send_inner(P.scribble_paint_message(idx, n, rgb=px))
                     sent += 1
                 # Remember what the strip really shows (including quantization is unnecessary: we diff against
                 # the requested frame, and the periodic full refresh corrects any rounding drift).

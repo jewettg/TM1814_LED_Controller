@@ -4,9 +4,10 @@ export function help(ctx) {
   const sec = (title, ...kids) => h('section', { class: 'card stack' }, h('h2', null, title), ...kids);
   render(ctx.app, pageHead('Help'),
     h('div', { class: 'stack' },
-      sec('Two kinds of effects',
+      sec('Three kinds of effects',
         h('p', null, h('span', { class: 'badge native' }, 'Controller-native'), ' effects run on the controller itself. One command is sent and the controller animates by itself, so they keep running even if this program stops or the network drops. They are smooth at any speed, but they cannot be previewed in the browser.'),
-        h('p', null, h('span', { class: 'badge streamed' }, 'Streamed'), ' effects are drawn by this program, frame by frame (about 5 frames per second), and sent to the strip. They need this program to keep running, but they can be previewed here and you can fine-tune every detail, including your own frame-by-frame animations.')),
+        h('p', null, h('span', { class: 'badge fixed' }, 'Fixed'), ' effects are a still picture, such as every 4th pixel lit. This program paints it once and the lights simply stay that way: nothing moves, nothing is sent afterwards, and it stays lit even if this program stops. They can be previewed here.'),
+        h('p', null, h('span', { class: 'badge animated' }, 'Animated'), ' effects are drawn by this program, frame by frame (about 5 frames per second), and sent to the strip. They need this program to keep running, but they can be previewed here and you can fine-tune every detail, including your own frame-by-frame animations.')),
       sec('Effects',
         h('p', null, 'The Effects page is your catalog. Press Play on lights to try one right away. Edit changes its settings with a live preview; you can also try unsaved changes on the lights before saving. Duplicate an effect to make a variation without touching the original.')),
       sec('Run lists',

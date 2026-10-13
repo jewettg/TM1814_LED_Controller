@@ -69,7 +69,7 @@ export async function runlistEditor(ctx) {
   function drawItems() {
     if (!st.items.length) { render(list, emptyState('No effects in this run list yet. Use "Add effect" to choose some.')); return; }
     render(list, st.items.map((it, i) => {
-      const e = effById[it.effect_id], k = kindMap[it.effect_kind || (e && e.kind)] || { native: false, label: it.effect_kind };
+      const e = effById[it.effect_id], k = kindMap[it.effect_kind || (e && e.kind)] || { family: 'animated', label: it.effect_kind };
       const dur = h('input', { type: 'number', min: 1, max: 86400, step: 1, value: it.duration_sec, 'aria-label': 'Seconds for ' + it.effect_name });
       const pretty = h('span', { class: 'muted small', style: { minWidth: '4.5em' } }, fmtDuration(it.duration_sec));
       const setDur = (v) => { it.duration_sec = v; dur.value = v; pretty.textContent = fmtDuration(v); touch(); };
@@ -78,7 +78,7 @@ export async function runlistEditor(ctx) {
       const row = h('div', { class: 'rl-item', draggable: 'true' },
         h('span', { class: 'grip', 'aria-hidden': 'true', title: 'Drag to reorder' }, '☰'),
         h('div', { class: 'stack' },
-          h('div', { class: 'meta' }, h('span', { class: 'name' }, (i + 1) + '. ' + it.effect_name), kindBadge(k.native), h('span', { class: 'badge gray' }, k.label || it.effect_kind)),
+          h('div', { class: 'meta' }, h('span', { class: 'name' }, (i + 1) + '. ' + it.effect_name), kindBadge(k.family), h('span', { class: 'badge gray' }, k.label || it.effect_kind)),
           h('div', { class: 'meta' },
             h('div', { class: 'dur' }, dur, h('span', { class: 'small' }, 'sec'), pretty, quick),
             h('span', { class: 'spacer' }),
@@ -101,8 +101,8 @@ export async function runlistEditor(ctx) {
       const q = search.value.trim().toLowerCase();
       const found = effects.filter((e) => !q || e.name.toLowerCase().includes(q) || (kindMap[e.kind] || { label: '' }).label.toLowerCase().includes(q));
       render(results, found.length ? found.map((e) => {
-        const k = kindMap[e.kind] || { native: false, label: e.kind };
-        return h('div', { class: 'pick-row' }, h('span', { class: 'n' }, e.name), kindBadge(k.native),
+        const k = kindMap[e.kind] || { family: 'animated', label: e.kind };
+        return h('div', { class: 'pick-row' }, h('span', { class: 'n' }, e.name), kindBadge(k.family),
           h('button', { type: 'button', class: 'small primary', 'aria-label': 'Add ' + e.name, onclick: () => {
             st.items.push({ effect_id: e.id, effect_name: e.name, effect_kind: e.kind, duration_sec: 60 }); drawItems(); touch(); toast('Added "' + e.name + '"', 'success', 1500);
           } }, 'Add'));

@@ -206,3 +206,33 @@ def test_upcoming_lists_next_windows(rig):
     sched(db, make_list(db), name="Nightly")
     up = mgr.upcoming(now_at(12))
     assert up and up[0]["name"] == "Nightly" and up[0]["start"].startswith("2026-10-13T18:00")
+
+
+def test_fixed_effect_is_painted_once_and_then_left_alone(rig):
+    db, ctrl, runner, _ = rig
+    eff = db.create_effect("Night", "nth", {"every": 4})
+    runner.play_effect(eff, None)
+    assert wait_for(lambda: (runner.status()["item"] or {}).get("name") == "Night")
+    time.sleep(1.0)
+    st = runner.status()["item"]
+    assert st["family"] == "fixed" and st["native"] is False
+    n_paints = len([s for s in ctrl.sent if s[10:12] == bytes([0xE1, 0x26])])
+    assert n_paints == 2                                             # the white pixels and the black ones, once
+    time.sleep(1.2)
+    assert len([s for s in ctrl.sent if s[10:12] == bytes([0xE1, 0x26])]) == n_paints   # nothing is re-sent
+    assert len([s for s in ctrl.sent if s[10:12] == bytes([0xE1, 0x23])]) == 1
+
+
+def test_fixed_effect_is_repainted_if_the_controller_forgets_it(rig):
+    db, ctrl, runner, _ = rig
+    ctrl.query_state()
+    runner.play_effect(db.create_effect("Night", "nth", {"every": 3}), None)
+    assert wait_for(lambda: (runner.status()["item"] or {}).get("name") == "Night")
+    time.sleep(0.6)
+    before = len([s for s in ctrl.sent if s[10:12] == bytes([0xE1, 0x26])])
+    import tm1814_led.runner as R
+    R.HEALTH_INTERVAL = 0.3                                         # check quickly; the simulated state is not in scribble mode
+    try:
+        assert wait_for(lambda: len([s for s in ctrl.sent if s[10:12] == bytes([0xE1, 0x26])]) > before, 6)
+    finally:
+        R.HEALTH_INTERVAL = 30.0

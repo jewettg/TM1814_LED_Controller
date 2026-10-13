@@ -1,10 +1,11 @@
-"""Streamed effects: rendered here frame by frame and painted onto the strip (this program must be running)."""
+"""Animated effects: rendered here frame by frame and painted onto the strip (this program must be running)."""
 from __future__ import annotations
 
+import datetime as dt
 import math
 from typing import List
 
-from ..protocol import RGB
+from ..protocol import RGB, Pixel
 from . import Effect, Param, register
 from .util import add, hsv, lerp, palette, scale
 
@@ -19,7 +20,7 @@ def _flip(i: int, n: int, direction: str) -> int:
 class Embers(Effect):
     kind = "embers"
     label = "Embers"
-    category = "Streamed"
+    category = "Animated"
     description = "Flickering glowing coals. Blocks of LEDs brighten and dim at random; every third block is hotter."
     params = (
         Param("color", "Ember color", "color", "#ff5a00"),
@@ -45,7 +46,7 @@ class Embers(Effect):
 class Wave(Effect):
     kind = "wave"
     label = "Rolling wave"
-    category = "Streamed"
+    category = "Animated"
     description = "Two colors flow into each other in a slow sine wave that rolls along the strip."
     params = (
         Param("color_a", "Color A", "color", "#8c00ff"),
@@ -73,7 +74,7 @@ class Wave(Effect):
 class Comet(Effect):
     kind = "comet"
     label = "Comet / ghost"
-    category = "Streamed"
+    category = "Animated"
     description = "A bright head with a fading tail travels along the strip over a dim background."
     params = (
         Param("color", "Comet color", "color", "#00ff78"),
@@ -108,7 +109,7 @@ class Comet(Effect):
 class Lightning(Effect):
     kind = "lightning"
     label = "Lightning"
-    category = "Streamed"
+    category = "Animated"
     description = ("Small flickering bolts at random spots over a base color, with an occasional full-strip flash. "
                    "Change the colors for a white storm, black sky, orange glow with purple flashes...")
     params = (
@@ -160,7 +161,7 @@ class Lightning(Effect):
 class Twinkle(Effect):
     kind = "twinkle"
     label = "Twinkle"
-    category = "Streamed"
+    category = "Animated"
     description = "Single LEDs sparkle on and fade out over a base color."
     params = (
         Param("base", "Background color", "color", "#000000"),
@@ -191,7 +192,7 @@ class Twinkle(Effect):
 class Rainbow(Effect):
     kind = "rainbow"
     label = "Rainbow"
-    category = "Streamed"
+    category = "Animated"
     description = "A smooth rainbow that scrolls along the strip."
     params = (
         Param("wavelength", "Rainbow length", "int", 120, min=10, max=500, unit="LEDs"),
@@ -212,7 +213,7 @@ class Rainbow(Effect):
 class Breathe(Effect):
     kind = "breathe"
     label = "Breathe"
-    category = "Streamed"
+    category = "Animated"
     description = "The whole strip slowly brightens and dims, stepping through your colors."
     params = (
         Param("colors", "Colors", "colors", ["#ff0000"], min=1, max=8),
@@ -233,7 +234,7 @@ class Breathe(Effect):
 class Chase(Effect):
     kind = "chase"
     label = "Marching blocks"
-    category = "Streamed"
+    category = "Animated"
     description = "Repeating blocks of color march along the strip (candy cane, Christmas, school colors...)."
     params = (
         Param("colors", "Block colors", "colors", ["#ff0000", "#ffffff"], min=1, max=8),
@@ -262,7 +263,7 @@ class Chase(Effect):
 class Wipe(Effect):
     kind = "wipe"
     label = "Color wipe"
-    category = "Streamed"
+    category = "Animated"
     description = "A color fills the strip from one end, holds, then wipes back out."
     params = (
         Param("color", "Color", "color", "#00c8ff"),
@@ -284,7 +285,7 @@ class Wipe(Effect):
 class ScrollGradient(Effect):
     kind = "gradient"
     label = "Scrolling gradient"
-    category = "Streamed"
+    category = "Animated"
     description = "A smooth gradient through your colors that scrolls along the strip (sunset, ocean, fire...)."
     params = (
         Param("colors", "Gradient colors", "colors", ["#ff3c00", "#ff00a0", "#4b00ff"], min=2, max=12),
@@ -298,3 +299,45 @@ class ScrollGradient(Effect):
         sign = 1 if self.p["direction"] == "forward" else -1
         shift = sign * t / self.p["period"]
         return [palette(cols, i / self.p["wavelength"] - shift) for i in range(self.n)]
+
+
+@register
+class SteppingNth(Effect):
+    kind = "nth_step"
+    label = "Every Nth pixel, stepping"
+    category = "Animated"
+    description = ("Like 'Every Nth pixel', but the spacing steps through a range on a timer: by default 4, then 5, "
+                   "then 6 pixels apart, changing every hour and looping. Needs this program running to make the changes.")
+    params = (
+        Param("first", "Smallest spacing", "int", 4, min=2, max=60, help="Every Nth pixel, starting here..."),
+        Param("last", "Largest spacing", "int", 6, min=2, max=60, help="...up to this, then loop back to the start."),
+        Param("change_minutes", "Change every", "int", 60, min=1, max=1440, unit="minutes"),
+        Param("follow_clock", "Change on the clock", "bool", True,
+              help="On: changes at fixed times (on the hour for 60 minutes), using this computer's clock. "
+                   "Off: counts from the moment the effect starts."),
+        Param("offset", "First lit pixel", "int", 0, min=0, max=59),
+        Param("use_white", "Use the white LED", "bool", True),
+        Param("white_level", "White LED brightness", "int", 100, min=1, max=100, unit="%"),
+        Param("color", "Color (when not using the white LED)", "color", "#ffb347"),
+        Param("background", "Color of the other pixels", "color", "#000000"),
+    )
+
+    def now(self) -> dt.datetime:
+        return dt.datetime.now()
+
+    def spacing(self, t: float) -> int:
+        lo, hi = sorted((self.p["first"], self.p["last"]))
+        values = list(range(lo, hi + 1))
+        step = self.p["change_minutes"]
+        if self.preview:                       # the browser preview cannot wait an hour: one step per 3 seconds
+            slot = int(t // 3)
+        elif self.p["follow_clock"]:
+            now = self.now()
+            slot = (now.hour * 60 + now.minute) // step
+        else:
+            slot = int(t // (step * 60))
+        return values[slot % len(values)]
+
+    def frame(self, t: float) -> List[Pixel]:
+        from .fixed import nth_frame
+        return nth_frame(self, self.spacing(t))

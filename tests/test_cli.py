@@ -114,10 +114,15 @@ def test_unreachable_service_gives_a_friendly_message(service, monkeypatch, caps
 def test_effects_play_stop_and_json(service, capsys):
     assert run("effects", "--no-color", "lightning") == 0
     out = capsys.readouterr().out
-    assert "Lightning (storm)" in out and "streamed" in out and "Halloween - Embers" not in out
+    assert "Lightning (storm)" in out and "Animated" in out and "Halloween - Embers" not in out
     assert run("effects", "--no-color", "--native", "--json") == 0
     rows = json.loads(capsys.readouterr().out)
-    assert rows and all(r["runs_on"] == "controller" for r in rows)
+    assert rows and all(r["family"] == "native" for r in rows)
+    assert run("effects", "--no-color", "--fixed", "--json") == 0
+    fixed = json.loads(capsys.readouterr().out)
+    assert [r["name"] for r in fixed] == ["Night (Bright)", "Night (Dim)", "Night (Low)", "Night (Medium)"]
+    assert run("effects", "--no-color", "--animated", "night") == 0
+    assert "Night (Hourly 4-6)" in capsys.readouterr().out
     assert run("play", "--no-color", "halloween - embers") == 0                  # case-insensitive exact name
     assert "Playing effect" in capsys.readouterr().out
     assert run("play", "--no-color", "Halloween show", "--runlist") == 0
@@ -158,7 +163,10 @@ def test_direct_commands_need_the_password_first_and_use_the_fake_controller(ser
         assert "Power" in out and "250" in out
         assert run("off", "--no-color", "--controller-host", host) == 0
         assert run("color", "--no-color", "--controller-host", host, "orange") == 0
-        time.sleep(0.3)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (any(r.startswith(b"\x71\x24") for r in fake.received)
+                                              and any(r.startswith(b"\xb0\xb1\xb2\xb3") for r in fake.received)):
+            time.sleep(0.05)
         assert any(r.startswith(b"\x71\x24") for r in fake.received)           # power-off command reached the controller
         assert any(r.startswith(b"\xb0\xb1\xb2\xb3") for r in fake.received)   # and the color message
     finally:

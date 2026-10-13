@@ -131,7 +131,10 @@ def test_real_socket_state_query_and_commands():
         c.power(False)
         c.solid((255, 0, 0))
         import time
-        time.sleep(0.2)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (P.power_command(False) in fake.received
+                                              and any(r.startswith(P.ENVELOPE_MAGIC) for r in fake.received)):
+            time.sleep(0.05)
         assert P.power_command(False) in fake.received
         assert any(r.startswith(P.ENVELOPE_MAGIC) for r in fake.received)
         c.close()
@@ -149,3 +152,22 @@ def test_connection_refused_reports_error():
     with pytest.raises(ControllerError):
         c.query_state()
     assert "connect failed" in c.last_error
+
+
+def test_white_led_pixels_are_painted_in_white_mode_and_cost_one_command():
+    c = SimulatedController("sim", min_gap=0)
+    frame = [(0, 0, 0, 100) if i % 3 == 0 else (0, 0, 0) for i in range(250)]
+    assert c.show_frame(frame) == 2                                  # one command for the white pixels, one for black
+    paints = [s[10:-1] for s in c.sent if s[10:12] == bytes([0xE1, 0x26])]
+    white = next(p for p in paints if p[11] == 100)                  # the white-level byte of the E1 26 header
+    assert white[7:10] == bytes([0, 0, 0]) and white[13] & 0b10000000   # color off, pixel 0 selected
+    assert c.show_frame(frame) == 0                                  # nothing changed, nothing sent
+
+
+def test_white_pixels_follow_master_brightness_and_are_never_quantized():
+    c = SimulatedController("sim", min_gap=0)
+    c.brightness = 50
+    c.show_frame([(0, 0, 0, 100)] * 250)
+    paint = [s[10:-1] for s in c.sent if s[10:12] == bytes([0xE1, 0x26])][-1]
+    assert paint[11] == 50
+    assert quantize((0, 0, 0, 37), 64) == (0, 0, 0, 37)

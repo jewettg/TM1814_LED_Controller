@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 RGB = Tuple[int, int, int]
+# A pixel is (r, g, b), or (0, 0, 0, w) to light only the white LED at level w (0-100).
+Pixel = Tuple[int, ...]
 
 ENVELOPE_MAGIC = bytes([0xB0, 0xB1, 0xB2, 0xB3, 0x00, 0x01])
 ENVELOPE_VERSION = 0x02
@@ -89,6 +91,17 @@ def hsv_bytes(rgb: RGB, white: int = 0) -> List[int]:
     r, g, b = (max(0, min(255, int(c))) for c in rgb)
     h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
     return [int(round(h * 180)) % 181, int(round(s * 100)), int(round(v * 100)), 0x00, max(0, min(100, int(white)))]
+
+
+def white_pixel(level: int) -> Pixel:
+    return (0, 0, 0, max(0, min(100, int(level))))
+
+
+def scale_pixel(px: Pixel, percent: float) -> Pixel:
+    """Apply a brightness percentage to an (r, g, b) or white-LED pixel."""
+    if len(px) == 4:
+        return (0, 0, 0, int(px[3] * max(0.0, min(100.0, percent)) / 100.0))
+    return scale_rgb((px[0], px[1], px[2]), percent)
 
 
 def scale_rgb(rgb: RGB, percent: float) -> RGB:
