@@ -119,9 +119,9 @@ def test_uninstall_dry_run_keeps_data(capsys, monkeypatch):
 IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 \tinet 127.0.0.1 netmask 0xff000000
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
-\tinet 192.168.100.163 netmask 0xffffff00 broadcast 192.168.100.255
+\tinet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255
 utun12: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
-\tinet 172.29.12.74 --> 172.29.12.74 netmask 0xffffffff
+\tinet 10.99.0.5 --> 10.99.0.5 netmask 0xffffffff
 \tinet 169.254.1.2 netmask 0xffff0000
 """
 IP_ADDR = "2: eth0    inet 192.168.1.20/24 brd 192.168.1.255 scope global eth0\n3: wg0    inet 10.8.0.2/32 scope global wg0\n"
@@ -129,17 +129,17 @@ IPCONFIG = "   IPv4 Address. . . . . . . . . . . : 192.168.1.77\n   Subnet Mask 
 
 
 def test_parse_addresses_from_each_os_tool():
-    assert I.parse_ipv4_addresses(IFCONFIG) == ["192.168.100.163", "172.29.12.74"]   # loopback and link-local skipped
+    assert I.parse_ipv4_addresses(IFCONFIG) == ["192.168.1.20", "10.99.0.5"]   # loopback and link-local skipped
     assert I.parse_ipv4_addresses(IP_ADDR) == ["192.168.1.20", "10.8.0.2"]
     assert I.parse_ipv4_addresses(IPCONFIG) == ["192.168.1.77"]
 
 
 def test_vpn_address_never_wins_over_the_network_with_the_controller():
-    ips = ["172.29.12.74", "192.168.100.163"]
-    assert I.rank_addresses(ips) == ["192.168.100.163", "172.29.12.74"]            # 192.168 preferred
+    ips = ["10.99.0.5", "192.168.1.20"]
+    assert I.rank_addresses(ips) == ["192.168.1.20", "10.99.0.5"]            # 192.168 preferred
     assert I.rank_addresses(["10.8.0.2", "192.168.1.20"], "10.8.0.9")[0] == "10.8.0.2"   # but the controller's network wins
     assert I.rank_addresses(["8.8.8.8", "172.20.1.1", "10.0.0.5"]) == ["10.0.0.5", "172.20.1.1", "8.8.8.8"]
-    assert I.rank_addresses(["172.29.12.74", "172.29.12.74"]) == ["172.29.12.74"]  # de-duplicated
+    assert I.rank_addresses(["10.99.0.5", "10.99.0.5"]) == ["10.99.0.5"]  # de-duplicated
 
 
 def test_install_runs_expected_commands_with_fake_runner(tmp_path, monkeypatch):
@@ -179,9 +179,9 @@ def test_uninstall_dry_run_keeps_data(capsys, monkeypatch):
 IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 \tinet 127.0.0.1 netmask 0xff000000
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
-\tinet 192.168.100.163 netmask 0xffffff00 broadcast 192.168.100.255
+\tinet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255
 utun12: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
-\tinet 172.29.12.74 --> 172.29.12.74 netmask 0xffffffff
+\tinet 10.99.0.5 --> 10.99.0.5 netmask 0xffffffff
 \tinet 169.254.1.2 netmask 0xffff0000
 """
 IP_ADDR = "2: eth0    inet 192.168.1.20/24 brd 192.168.1.255 scope global eth0\n3: wg0    inet 10.8.0.2/32 scope global wg0\n"
@@ -189,17 +189,17 @@ IPCONFIG = "   IPv4 Address. . . . . . . . . . . : 192.168.1.77\n   Subnet Mask 
 
 
 def test_parse_addresses_from_each_os_tool():
-    assert I.parse_ipv4_addresses(IFCONFIG) == ["192.168.100.163", "172.29.12.74"]   # loopback and link-local skipped
+    assert I.parse_ipv4_addresses(IFCONFIG) == ["192.168.1.20", "10.99.0.5"]   # loopback and link-local skipped
     assert I.parse_ipv4_addresses(IP_ADDR) == ["192.168.1.20", "10.8.0.2"]
     assert I.parse_ipv4_addresses(IPCONFIG) == ["192.168.1.77"]
 
 
 def test_vpn_address_never_wins_over_the_network_with_the_controller():
-    ips = ["172.29.12.74", "192.168.100.163"]
-    assert I.rank_addresses(ips) == ["192.168.100.163", "172.29.12.74"]            # 192.168 preferred
+    ips = ["10.99.0.5", "192.168.1.20"]
+    assert I.rank_addresses(ips) == ["192.168.1.20", "10.99.0.5"]            # 192.168 preferred
     assert I.rank_addresses(["10.8.0.2", "192.168.1.20"], "10.8.0.9")[0] == "10.8.0.2"   # but the controller's network wins
     assert I.rank_addresses(["8.8.8.8", "172.20.1.1", "10.0.0.5"]) == ["10.0.0.5", "172.20.1.1", "8.8.8.8"]
-    assert I.rank_addresses(["172.29.12.74", "172.29.12.74"]) == ["172.29.12.74"]  # de-duplicated
+    assert I.rank_addresses(["10.99.0.5", "10.99.0.5"]) == ["10.99.0.5"]  # de-duplicated
 
 
 def test_reinstall_keeps_existing_password(tmp_path, monkeypatch, capsys):
