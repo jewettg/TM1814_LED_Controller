@@ -712,6 +712,8 @@ The streaming engine was also exercised against real hardware through the runnin
 
 ## 18. Provenance and credits
 
+The research behind this document is kept in [research/](research/): the development log, the community research, and the analysis of the vendor app's data files.
+
 * The behavior documented here was established by **observation of a real controller** during development (queries, controlled commands, and a person watching the lights), recorded in the project history.
 * The `E1 21`, `E1 22`, `E1 23` and `E1 26` layouts and the pattern names come from the pull requests of the open-source [`flux_led`](https://github.com/lightinglibs/flux_led) project by their contributors (Apache-2.0); this project reimplements the byte layouts from scratch and verified them on hardware. The envelope format and state-frame field meanings are likewise from `flux_led` and were cross-checked against real frames.
 * The app's data files (product definitions and command templates shipped inside the vendor's Android app) were **read for interoperability research only**; no vendor code or assets are included in this repository.

@@ -162,6 +162,26 @@ The same is available from the command line, for example `tm1814-led logs --sinc
 
 ---
 
+## Working out how your lights are laid out
+
+The controller reports how many pixels it is **set** to drive (`tm1814-led state` shows it, for example `LEDs 250`), but it cannot count the pixels that are really there, because nothing is read back from the strip. A few test patterns, shown on your actual lights, answer the rest. Stop anything that is playing first (`tm1814-led stop`), then walk around the house with the terminal:
+
+| Run | What to look for | What it tells you |
+| --- | --- | --- |
+| `tm1814-led test halves` | Where red turns to blue | Where the second half of the pixel numbers lands. Red and blue appearing in **two places** means both outputs show the same thing (mirrored). |
+| `tm1814-led test single 0` | Count the white spots on the whole house | **2** = two outputs showing identical data (and each pixel number lights one spot on each run). More than 2 means a pattern repeats along a run. Try `single 100` and `single 249` too. |
+| `tm1814-led test zones` | Follow one run from its start | Five colors in order (red, yellow, green, cyan, blue). Shows the order, whether the run reaches the last color, and whether it ends early. |
+| `tm1814-led test ruler` | Count white ticks (every 10) and red ticks (every 50) along a run | The length of a run in pixels. If you count more ticks than 25 white / 5 red per run, **each pixel drives several LEDs** or the run is longer than the configured count. |
+| `tm1814-led test fillto 100` (then 125, 200, 250) | Where the green stops | How far along the house a given number of pixels reaches. Compare with how many physical lights that stretch has. |
+| `tm1814-led test chase` | A single white LED moving from 0 to the end | Watch where it vanishes or jumps to another place. Use `--delay 0.5` to slow it down. |
+| `tm1814-led test colororder` | Groups of red, green, blue and white | If red looks green (or similar) the color channels are swapped (a setting in the vendor app). |
+
+Press Ctrl-C to finish a pattern; the lights turn off. `tm1814-led test` on its own lists every pattern.
+
+**Reading the results.** A TM1814 strip at 24 V often puts several LEDs behind one addressable "pixel", so 100 pixels can light well over 100 physical lights; that is normal. Two runs of 250 pixels that mirror each other is also normal for this controller. If the pixel count the controller is set to (`state`) is *smaller* than what is really on a run, the extra lights stay dark; change that count in the vendor app, which this program deliberately does not do. Findings from the first real installation are in [research/FINDINGS.md](research/FINDINGS.md).
+
+---
+
 ## Everyday recipes
 
 **Lights on every night until 11 pm, running my favorites**
@@ -310,7 +330,7 @@ pytest -q                                          # 130+ tests, no hardware nee
 python -m tm1814_led serve --simulate --port 8099
 ```
 
-Everything technical — the controller's wire protocol, the streaming engine, effect and API reference, how to add your own effect kind — is in **[TECHNICAL_README.md](TECHNICAL_README.md)**.
+Everything technical — the controller's wire protocol, the streaming engine, effect and API reference, how to add your own effect kind — is in **[TECHNICAL_README.md](TECHNICAL_README.md)**. The evidence and history behind it (probes, app analysis, community research, open questions) is in **[research/](research/)**.
 
 ## License
 
