@@ -156,6 +156,13 @@ class ServiceClient:
             raise ServiceError("the service did not start a session")
         return self.token
 
+    def adopt_session_cookie(self) -> Optional[str]:
+        """After the service replaced our session cookie (for example on a password change), start using the new one."""
+        for cookie in self._jar:
+            if cookie.name == COOKIE:
+                self.token = cookie.value
+        return self.token
+
     def logout(self) -> None:
         try:
             self._raw("POST", "/api/logout")

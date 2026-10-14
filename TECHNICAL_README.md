@@ -526,6 +526,7 @@ Interactive documentation is served by FastAPI at `/docs` (and `/openapi.json`) 
 | --- | --- |
 | `GET /api/status` | runtime status (above) |
 | `POST /api/login`, `POST /api/logout`, `GET /api/auth` | sign in `{password}` / sign out / `{required, authenticated}` (public; see section 13) |
+| `POST /api/password` | change the password `{current, new}`; requires a session (see section 13) |
 | `GET /api/meta` | `{version, simulated, timezones[], weekdays[], repeat_types[], led_count, builtin_patterns[]}` |
 | `GET /api/effect-kinds` | schema for every effect kind (drives the editor forms) |
 | `GET /api/logs?count=200&since=&until=&level=&q=` | the newest `count` matching lines, oldest first: `[{ts, level, logger, msg}]`. `since`/`until` are Unix times in seconds, `level` is the minimum (`INFO`, `WARNING`, `ERROR`), `q` is a text search |
@@ -592,6 +593,7 @@ curl -s -X POST localhost:8080/api/control/play -H 'Content-Type: application/js
 * The controller itself has **no authentication**; anyone on the same network can drive it. Keep it on a trusted LAN/VLAN.
 * **The web page is the only way into the program, and it always requires a password.** `serve` refuses to start without one (except `--simulate`); the installer always sets one. A single shared password; no accounts.
 * **Sign-in:** `POST /api/login {"password"}` returns an `HttpOnly`, `SameSite=Lax` cookie `tm1814_session` holding `v1.<expiry>.<HMAC-SHA256>`. The key is derived from a random 256-bit secret kept in the database plus a hash of the password, so sessions survive restarts and **changing the password signs everyone out**. Sessions last 30 days. Nothing about sessions is stored server-side.
+* **Changing the password** (`POST /api/password {current, new}`, Settings page, or `tm1814-led password`): requires a signed-in session **and** the current password (wrong attempts count toward the same throttle), a new password of 8–200 characters different from the current one. The new password is stored in the database (settings key `_password`) as a **salted PBKDF2-HMAC-SHA256 hash** (200,000 iterations, random 16-byte salt), never in clear text, and it overrides the settings-file password while present. The signing key is derived from the active password, so every other session and terminal is signed out at once; the caller gets a fresh cookie and stays signed in. The record also stores a fingerprint of the settings-file password: if the installer later writes a *different* password to the settings file, the stale override is discarded at startup and the installer's password wins again (re-running the installer without a password option keeps the changed one). The override is not an editable setting and is not returned by `/api/settings`.
 * **Gatekeeping:** a middleware lets only `/login`, `/api/login`, `/api/auth` and `/style.css` through without a valid cookie. Unauthenticated `/api/*` requests get `401 {"detail": "login required"}` **without** a `WWW-Authenticate` header (so browsers never show a native prompt); other paths get `302 /login`. **HTTP Basic is not accepted.** `/docs` and `/openapi.json` are protected too.
 * **Caching:** every response carries `Cache-Control: no-store` (API) or `no-cache` (pages), so after Log out a browser can never show a cached page before being redirected.
 * **Brute force:** 8 wrong passwords per client address in 5 minutes returns `429` for the rest of the window; every wrong guess also costs 0.6 s. Password comparison is constant-time.
@@ -643,7 +645,7 @@ tm1814-led logs [-n N] [--since WHEN] [--until WHEN] [--level info|warning|error
  direct commands (straight to the controller; sign-in still required):
 tm1814-led discover | state | on | off | color COLOR [--white LEVEL] | test [PATTERN [N]] [--delay S]
  session:
-tm1814-led login | logout
+tm1814-led login | logout | password
  common options:  --url URL   --controller-host HOST[:PORT]   --json   --no-color
 ```
 
@@ -684,6 +686,7 @@ pytest -q
 | `test_runner.py` | playing/looping/next/pause/stop, idle actions, schedule start/stop, user-stop suppression, priority, restart on edit |
 | `test_api.py` | every route group end to end with the simulated controller, auth, error codes |
 | `test_installer.py` | file contents per OS, mode selection, address detection (VPN-safe), a password is always set, a full install against a fake command runner, dry runs |
+| `test_password.py` | hashing and salting, an override beating the settings-file password, signing everyone else out, restarts, the installer's password winning, the CLI `password` command |
 | `test_auth.py` | login page and cookie sessions, redirects, forged/expired tokens, throttling, no cache, Basic rejected |
 | `test_cli.py` | the real CLI against a live local service: password prompt once per terminal session, session cache, name matching, every command, direct commands against a fake controller |
 

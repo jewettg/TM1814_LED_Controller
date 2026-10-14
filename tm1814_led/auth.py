@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 COOKIE = "tm1814_session"
 SESSION_SECONDS = 30 * 24 * 3600
@@ -18,20 +19,56 @@ MAX_FAILURES = 8          # failed logins allowed ...
 FAILURE_WINDOW = 300.0    # ... per this many seconds, per client address
 
 
+PBKDF2_ITERATIONS = 200_000
+MIN_PASSWORD_LENGTH = 8
+
+
+def fingerprint(password: Optional[str]) -> str:
+    """A one-way fingerprint of the configured (settings file) password, to notice when the installer changes it."""
+    return hashlib.sha256(("tm1814|" + (password or "")).encode()).hexdigest()
+
+
+def hash_password(password: str, salt: Optional[bytes] = None, iterations: int = PBKDF2_ITERATIONS) -> Dict[str, Any]:
+    salt = salt if salt is not None else os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    return {"salt": salt.hex(), "hash": digest.hex(), "iterations": iterations}
+
+
+def verify_hash(password: str, record: Dict[str, Any]) -> bool:
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(record["salt"]), int(record["iterations"]))
+    return hmac.compare_digest(digest.hex(), record["hash"])
+
+
 class Auth:
-    def __init__(self, password: Optional[str], secret: str, session_seconds: int = SESSION_SECONDS):
+    """The password is either the one from the settings file (`password`) or one changed later in the web page /
+    command line (`override`, a salted hash stored in the database). An override wins while it is present."""
+
+    def __init__(self, password: Optional[str], secret: str, session_seconds: int = SESSION_SECONDS,
+                 override: Optional[Dict[str, Any]] = None):
         self.password = password or ""
+        self.secret = secret
         self.session_seconds = session_seconds
-        # the signing key depends on the password, so changing the password signs everyone out
-        self._key = hashlib.sha256((secret + "|" + hashlib.sha256(self.password.encode()).hexdigest()).encode()).digest()
+        self.override = override
         self._failures: Dict[str, List[float]] = {}
+        self._rekey()
+
+    def _rekey(self) -> None:
+        # the signing key depends on the password, so changing the password signs everyone out
+        material = self.override["hash"] if self.override else hashlib.sha256(self.password.encode()).hexdigest()
+        self._key = hashlib.sha256((self.secret + "|" + material).encode()).digest()
+
+    def set_override(self, record: Dict[str, Any]) -> None:
+        self.override = record
+        self._rekey()
 
     @property
     def enabled(self) -> bool:
-        return bool(self.password)
+        return bool(self.password or self.override)
 
     # ---- passwords
     def check_password(self, given: str) -> bool:
+        if self.override:
+            return verify_hash(str(given), self.override)
         return hmac.compare_digest(str(given).encode(), self.password.encode())
 
     # ---- session tokens

@@ -17,7 +17,7 @@ from . import __version__
 from . import effects as fx
 from . import protocol as P
 from . import scheduler as sch
-from .auth import COOKIE, Auth
+from .auth import COOKIE, MIN_PASSWORD_LENGTH, Auth, fingerprint, hash_password
 from .config import default_data_dir
 from .controller import Controller, ControllerError, SimulatedController, discover
 from .db import Conflict, Database, NotFound
@@ -108,6 +108,11 @@ class LoginIn(BaseModel):
     password: str = ""
 
 
+class PasswordIn(BaseModel):
+    current: str = ""
+    new: str = ""
+
+
 class PowerIn(BaseModel):
     on: bool
 
@@ -154,7 +159,12 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     app.state.db, app.state.controller, app.state.runner, app.state.manager = db, controller, runner, manager
 
     # ---- login page + session cookie (the web page is the only interface)
-    auth = Auth(password, db.auth_secret())
+    env_fp = fingerprint(password)
+    override = db.get_password_override()
+    if override and override.get("env_fp") != env_fp:
+        db.clear_password_override()      # the settings file's password was changed (installer): that one wins again
+        override = None
+    auth = Auth(password, db.auth_secret(), override=override)
     app.state.auth = auth
     PUBLIC = {"/login", "/api/login", "/api/auth", "/style.css", "/favicon.ico"}
 
@@ -192,6 +202,32 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
         auth.record_failure(client)
         time.sleep(0.6)  # slows down guessing
         return JSONResponse({"detail": "That is not the password."}, status_code=401)
+
+    @app.post("/api/password")
+    def change_password(body: PasswordIn, request: Request):
+        client = request.client.host if request.client else "unknown"
+        wait = auth.blocked_for(client)
+        if wait:
+            return JSONResponse({"detail": f"Too many wrong passwords. Try again in {wait} seconds."}, status_code=429)
+        if not auth.check_password(body.current):
+            auth.record_failure(client)
+            time.sleep(0.6)
+            return JSONResponse({"detail": "The current password is not right."}, status_code=401)
+        new = body.new
+        if len(new) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"The new password must be at least {MIN_PASSWORD_LENGTH} characters.")
+        if len(new) > 200:
+            raise ValueError("The new password is too long (200 characters at most).")
+        if new == body.current:
+            raise ValueError("The new password is the same as the current one.")
+        record = hash_password(new)
+        db.set_password_override(record, env_fp)
+        auth.set_override(record)           # every other browser and terminal is signed out from now on
+        auth.record_success(client)
+        log.info("the web page password was changed")
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie(COOKIE, auth.make_token(), max_age=auth.session_seconds, httponly=True, samesite="lax", path="/")
+        return resp
 
     @app.post("/api/logout")
     def logout():

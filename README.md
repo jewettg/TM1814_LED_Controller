@@ -141,7 +141,11 @@ For sunrise/sunset to be exact, enter your **latitude, longitude and time zone**
 
 ### Settings
 
-The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); your time zone and location; and **how long to keep logs**.
+The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); your time zone and location; **how long to keep logs**; and **Change password**.
+
+**Latitude and longitude.** *Use my location* asks your browser for it, but browsers only do that on secure pages: `https://...` or `http://localhost:8080` on the computer running the program. If you opened the page by its network address (for example `http://192.168.1.20:8080`) the browser refuses without even asking, and the page says so. Either open `http://localhost:8080` on that computer and try again, or just type the numbers (search for your town's latitude and longitude; a few miles either way changes sunset by well under a minute).
+
+**Change password.** Type the current password, then the new one twice (at least 8 characters). You stay signed in; every other browser and terminal must sign in again. From a terminal: `tm1814-led password`.
 
 ### Logs
 
@@ -221,7 +225,7 @@ Your data is kept.
 ## Security
 
 * **A password is always required.** The web page shows a sign-in form; nothing — the lights, the catalog, the settings, the command line — works without it. The program refuses to start without a password, and the installer always sets one.
-* Signing in keeps you signed in on that browser for 30 days (or until you press **Log out**). Eight wrong passwords within five minutes from one device are followed by a short lockout. Changing the password signs every browser out.
+* Signing in keeps you signed in on that browser for 30 days (or until you press **Log out**). Eight wrong passwords within five minutes from one device are followed by a short lockout. Changing the password signs every other browser and terminal out.
 * The controller itself has **no password**: anyone on your Wi-Fi can control it directly with the vendor's app. Keep your Wi-Fi trustworthy.
 * The page is served over plain HTTP, so the password can be read by someone watching your network. That is fine on a home network you trust, but **do not expose this to the internet**; for remote access use a VPN (for example WireGuard or Tailscale).
 * The program never uses the vendor's cloud and never changes the controller's stored configuration (pixel count, IC type, wiring) — see the technical notes.
@@ -257,7 +261,8 @@ The service restarts at boot and the schedules pick up again. A controller that 
 | *Find controllers* finds nothing | Be sure the computer and controller are on the same network (not a "guest" Wi-Fi). Some routers block broadcast traffic — enter the controller's IP address by hand (find it in your router, or in the vendor app under the device's *More device information*). |
 | "controller: connect failed" | Wrong address, or the controller is off or busy. Try again in 10 seconds. Only one program should be talking to it. |
 | Lights do something odd after changing settings | Press **Stop**, wait a few seconds and play again. |
-| I forgot the password | Run the installer again with a new one: `python3 -m tm1814_led --install --generate-password` (or `--password YOUR_NEW_PASSWORD`). Your data is kept. |
+| I forgot the password | Run the installer again with a new one: `python3 -m tm1814_led --install --generate-password` (or `--password YOUR_NEW_PASSWORD`). Your data is kept, and this replaces any password you changed in the page. To change a password you do know, use **Settings → Change password** or `tm1814-led password`. |
+| *Use my location* says the browser refused | The page was opened at a network address over plain http. Open `http://localhost:8080` on the computer running the program, or type your latitude and longitude. |
 | Sunset times look wrong | Set your **latitude, longitude and time zone** in Settings. |
 | Something is not working and I want details | The **Logs** page (choose a range such as the last hour), `tm1814-led logs --since 1h --level warning`, or `journalctl -u tm1814-led -f` on Linux. |
 
@@ -288,7 +293,7 @@ tm1814-led status               # what's playing, controller state, next schedul
 | `on`, `off`, `color orange` | power, or a solid color (`#rrggbb`, `255,90,0`, or a name like `warm`, `purple`; `--white 80` for the white LED) |
 | `test halves` | light a **walk-around pattern** to learn how your strip is laid out: `halves`, `ruler`, `zones`, `blocks`, `colororder`, `gradient`, `chase`, `fillto 100`, `single 0`. Ctrl-C ends it and turns the lights off. `tm1814-led test` lists them. |
 | **Session and service** | |
-| `login`, `logout` | sign in now / forget this terminal's sign-in |
+| `login`, `logout`, `password` | sign in now / forget this terminal's sign-in / change the password |
 | `install`, `uninstall`, `service` | the same as `--install`, `--uninstall`, `--service-status` |
 | `serve` | run the web page in the foreground (what the service does for you) |
 

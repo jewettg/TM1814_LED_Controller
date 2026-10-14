@@ -61,8 +61,31 @@ export async function settings(ctx) {
     navigator.geolocation.getCurrentPosition((p) => {
       b.disabled = false; st.latitude = Math.round(p.coords.latitude * 10000) / 10000; st.longitude = Math.round(p.coords.longitude * 10000) / 10000;
       latIn.value = st.latitude; lonIn.value = st.longitude; toast('Location filled in. Remember to Save.', 'info', 3000);
-    }, (er) => { b.disabled = false; toast('Could not get your location: ' + er.message + '. Type the numbers instead.', 'error'); }, { timeout: 10000 });
+    }, (er) => {
+      b.disabled = false;
+      const why = !window.isSecureContext
+        ? 'Browsers only share a location with secure pages (https, or http://localhost). This page was opened at ' + location.origin + ', so the browser refused without asking. Open http://localhost:' + (location.port || 80) + ' on the computer that runs the program, or type the numbers instead.'
+        : (er.code === 1 ? 'The browser, or the computer\'s Location Services setting for the browser, said no. Allow it for this site, or type the numbers instead.'
+          : 'Could not get your location (' + er.message + '). Type the numbers instead.');
+      toast(why, 'error', 15000);
+    }, { timeout: 10000 });
   } }, 'Use my location');
+
+  // ---- change password
+  const pwCur = h('input', { type: 'password', id: nextId('pwc'), autocomplete: 'current-password' });
+  const pwNew = h('input', { type: 'password', id: nextId('pwn'), autocomplete: 'new-password' });
+  const pwNew2 = h('input', { type: 'password', id: nextId('pwn2'), autocomplete: 'new-password' });
+  const pwErr = h('div', { class: 'inline-error', role: 'alert' });
+  const pwBtn = h('button', { type: 'button', class: 'primary', onclick: act(async () => {
+    pwErr.textContent = '';
+    if (pwNew.value.length < 8) { pwErr.textContent = 'The new password must be at least 8 characters.'; return; }
+    if (pwNew.value !== pwNew2.value) { pwErr.textContent = 'The two new passwords do not match.'; return; }
+    try {
+      await api.post('/password', { current: pwCur.value, new: pwNew.value });
+      pwCur.value = pwNew.value = pwNew2.value = '';
+      toast('Password changed. Every other browser and terminal has been signed out.', 'info', 6000);
+    } catch (e) { pwErr.textContent = e.message; }
+  }) }, 'Change password');
 
   async function save(quiet) {
     showErr(null);
@@ -102,6 +125,11 @@ export async function settings(ctx) {
         h('div', { class: 'row' }, geoBtn),
         h('p', { class: 'help' }, 'Latitude and longitude are needed to work out sunrise and sunset for schedules. Without them, rough default times are used.')),
       h('div', { class: 'row' }, h('button', { class: 'primary', type: 'button', onclick: act(async () => { try { await save(false); } catch (e) { /* shown inline */ } }) }, 'Save settings')),
+      h('section', { class: 'card stack' }, h('h2', null, 'Password'),
+        h('p', { class: 'help' }, 'Change the password for this web page and the command line. You stay signed in here; every other browser and terminal must sign in again with the new one.'),
+        h('div', { class: 'form-grid' }, F('Current password', pwCur, null, pwCur.id), h('div')),
+        h('div', { class: 'form-grid' }, F('New password', pwNew, 'At least 8 characters.', pwNew.id), F('New password again', pwNew2, null, pwNew2.id)),
+        pwErr, h('div', { class: 'row' }, pwBtn)),
       h('section', { class: 'card' }, h('h2', null, 'About'),
         h('dl', { class: 'kv' }, h('dt', null, 'Version'), h('dd', null, meta.version), h('dt', null, 'Mode'), h('dd', null, meta.simulated ? 'Simulated controller' : 'Real controller'), h('dt', null, 'LED count'), h('dd', null, String(meta.led_count))),
         h('p', { class: 'help', style: { marginTop: '12px' } }, 'LED Controller runs your lights from this device: it keeps effects, run lists and schedules, and talks to the controller over Wi-Fi. Everything is stored locally.'))));

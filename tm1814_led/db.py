@@ -223,6 +223,19 @@ class Database:
         self._write("INSERT INTO settings(key, value) VALUES('_auth_secret', ?)", (json.dumps(secret),))
         return secret
 
+    def get_password_override(self) -> Optional[Dict[str, Any]]:
+        """{salt, hash, iterations, env_fp} of a password changed after install, or None."""
+        row = self._one("SELECT value FROM settings WHERE key = '_password'")
+        return json.loads(row["value"]) if row else None
+
+    def set_password_override(self, record: Dict[str, Any], env_fingerprint: str) -> None:
+        value = json.dumps({**record, "env_fp": env_fingerprint})
+        self._write("INSERT INTO settings(key, value) VALUES('_password', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (value,))
+
+    def clear_password_override(self) -> None:
+        self._write("DELETE FROM settings WHERE key = '_password'")
+
     def place(self) -> sch.Place:
         s = self.settings()
         return sch.Place(s["timezone"], s["latitude"], s["longitude"])

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import getpass
 import json
 import os
 import sys
@@ -192,6 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     lg.add_argument("-f", "--follow", action="store_true", help="keep printing new lines (Ctrl-C to stop)")
     add("login", "sign in now (every command asks for the password once per terminal session)", [svc], "session")
     add("logout", "forget this terminal session's sign-in", [svc], "session")
+    add("password", "change the web page / command line password", [svc], "session")
     add("discover", "find controllers on the network", [svc], "direct")
     add("state", "show the controller's state", [hw], "direct")
     add("on", "power on", [hw], "direct")
@@ -487,6 +489,22 @@ def cmd_login(a, out: Out) -> int:
     return 0
 
 
+def cmd_password(a, out: Out) -> int:
+    cl = _service(a, out)
+    if not sys.stdin.isatty():
+        raise ValueError("changing the password needs a terminal to type it in")
+    current = getpass.getpass("Current password: ")
+    new = getpass.getpass("New password (at least 8 characters): ")
+    if getpass.getpass("New password again: ") != new:
+        raise ValueError("The two new passwords do not match.")
+    cl.post("/api/password", {"current": current, "new": new})
+    token = cl.adopt_session_cookie()
+    if token:
+        SessionCache().save(cl.url, token)         # this terminal stays signed in; every other session is signed out
+    out.ok("Password changed. Every other browser and terminal must sign in again with the new password.")
+    return 0
+
+
 def cmd_logout(a, out: Out) -> int:
     cache = SessionCache()
     client = ServiceClient(service_url(a.url), token=cache.load(service_url(a.url)))
@@ -612,7 +630,7 @@ COMMANDS: Dict[str, Callable] = {
     "next": cmd_simple("/api/control/next", "Skipped to the next effect"),
     "pause": cmd_simple("/api/control/pause", "Paused"), "resume": cmd_simple("/api/control/resume", "Resumed"),
     "brightness": cmd_brightness, "logs": cmd_logs,
-    "login": cmd_login, "logout": cmd_logout, "discover": cmd_discover, "state": cmd_state, "on": cmd_power(True), "off": cmd_power(False),
+    "login": cmd_login, "logout": cmd_logout, "password": cmd_password, "discover": cmd_discover, "state": cmd_state, "on": cmd_power(True), "off": cmd_power(False),
     "color": cmd_color, "test": cmd_test,
 }
 INSTALLER_ALIASES = {"install": "--install", "uninstall": "--uninstall", "service": "--service-status"}

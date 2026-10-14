@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* **Change password** in Settings and with `tm1814-led password`: needs the current password, stores a salted
+  PBKDF2 hash in the database, signs every other browser and terminal out, and works the same on a Mac or a
+  Raspberry Pi. Re-running the installer with a new password still takes precedence.
+* "Use my location" now explains why browsers refuse it on a plain-http network address.
+
 * The controller closes idle connections; the program now notices and reconnects quietly instead of failing the first
   send after a quiet period (which cost about 3 seconds at the start of a scheduled run).
 
