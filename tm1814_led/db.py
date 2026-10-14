@@ -216,7 +216,12 @@ class Database:
     # ------------------------------------------------------------ effects
     @staticmethod
     def _effect_row(r: sqlite3.Row) -> Dict[str, Any]:
-        return {"id": r["id"], "name": r["name"], "kind": r["kind"], "params": json.loads(r["params"]),
+        params = json.loads(r["params"])
+        try:   # bring effects saved by an older version up to date (renamed or converted settings)
+            params = fx.get_kind(r["kind"]).clean(params)
+        except (fx.ParamError, ValueError):
+            pass
+        return {"id": r["id"], "name": r["name"], "kind": r["kind"], "params": params,
                 "description": r["description"], "seed_key": r["seed_key"],
                 "created": r["created"], "updated": r["updated"]}
 

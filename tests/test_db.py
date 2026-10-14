@@ -106,3 +106,13 @@ def test_seed_is_idempotent_and_respects_deletions(db):
     db.delete_effect(victim["id"])
     seed_catalog(db)
     assert not any(e["name"] == "Solid - Red" for e in db.list_effects())     # deleted seeds stay deleted
+
+
+def test_effects_saved_by_an_older_version_come_back_upgraded(db):
+    import json
+    e = db.create_effect("Hourly", "nth_step", {})
+    old = {"first": 4, "last": 6, "change_minutes": 120, "follow_clock": True}
+    db.conn.execute("UPDATE effects SET params = ? WHERE id = ?", (json.dumps(old), e["id"]))
+    db.conn.commit()
+    got = db.get_effect(e["id"])["params"]
+    assert got["change_hours"] == 2 and "change_minutes" not in got
