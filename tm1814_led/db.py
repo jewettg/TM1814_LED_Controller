@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from . import effects as fx
 from . import scheduler as sch
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "controller_host": "",        # IP or host name of the controller ("" = not configured yet)
@@ -26,8 +26,12 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "timezone": "",               # IANA name, e.g. America/Chicago ("" = this machine's zone)
     "latitude": None,             # for sunrise/sunset times
     "longitude": None,
+    "log_retention_days": 60,     # logs older than this are deleted automatically (31 or more)
     "seeded_keys": [],
 }
+
+MAX_LOG_ROWS = 500_000            # a safety net on top of the age limit
+LOG_LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 
 
 class NotFound(LookupError):
@@ -95,6 +99,15 @@ class Database:
                     spec TEXT NOT NULL,
                     created REAL NOT NULL, updated REAL NOT NULL);
                 PRAGMA user_version = 1;
+                """)
+                self.conn.commit()
+            if version < 2:
+                self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL, lvl INTEGER NOT NULL, level TEXT NOT NULL, logger TEXT NOT NULL, msg TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS logs_ts ON logs(ts);
+                PRAGMA user_version = 2;
                 """)
                 self.conn.commit()
 
@@ -172,6 +185,7 @@ class Database:
         num("min_gap_ms", 5, 500)
         num("max_groups", 2, 30)
         num("brightness", 0, 100)
+        num("log_retention_days", 31, 3650)
         if "controller_host" in ch:
             out["controller_host"] = str(ch["controller_host"] or "").strip()
         if "idle_action" in ch:
@@ -212,6 +226,55 @@ class Database:
     def place(self) -> sch.Place:
         s = self.settings()
         return sch.Place(s["timezone"], s["latitude"], s["longitude"])
+
+    # ------------------------------------------------------------ logs
+    def add_log(self, ts: float, level: str, logger: str, msg: str) -> None:
+        with self.lock:
+            self.conn.execute("INSERT INTO logs(ts, lvl, level, logger, msg) VALUES(?,?,?,?,?)",
+                              (ts, LOG_LEVELS.get(level, 20), level, logger, msg))
+            self.conn.commit()
+
+    @staticmethod
+    def _log_filter(since: Optional[float], until: Optional[float], level: Optional[str], q: Optional[str]):
+        where, args = ["1=1"], []
+        if since is not None:
+            where.append("ts >= ?"); args.append(since)
+        if until is not None:
+            where.append("ts <= ?"); args.append(until)
+        if level:
+            if level.upper() not in LOG_LEVELS:
+                raise ValueError(f"level must be one of {', '.join(LOG_LEVELS)}")
+            where.append("lvl >= ?"); args.append(LOG_LEVELS[level.upper()])
+        if q:
+            esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            where.append("msg LIKE ? ESCAPE '\\'"); args.append(f"%{esc}%")
+        return " AND ".join(where), args
+
+    def query_logs(self, since: Optional[float] = None, until: Optional[float] = None, level: Optional[str] = None,
+                   q: Optional[str] = None, limit: int = 500) -> Dict[str, Any]:
+        """Matching log lines, oldest first. If more than `limit` match, the NEWEST `limit` are returned."""
+        where, args = self._log_filter(since, until, level, q)
+        limit = max(1, min(10000, int(limit)))
+        total = self._one(f"SELECT COUNT(*) AS n FROM logs WHERE {where}", args)["n"]
+        rows = self._all(f"SELECT ts, level, logger, msg FROM logs WHERE {where} ORDER BY ts DESC, id DESC LIMIT ?",
+                         args + [limit])
+        bounds = self._one("SELECT MIN(ts) AS lo, MAX(ts) AS hi, COUNT(*) AS n FROM logs")
+        return {"entries": [{"ts": r["ts"], "level": r["level"], "logger": r["logger"], "msg": r["msg"]} for r in reversed(rows)],
+                "total": total, "limit": limit, "truncated": total > limit,
+                "oldest": bounds["lo"], "newest": bounds["hi"], "stored": bounds["n"],
+                "retention_days": self.settings()["log_retention_days"]}
+
+    def prune_logs(self, now: Optional[float] = None) -> int:
+        """Delete logs older than the retention period (and, as a safety net, anything beyond MAX_LOG_ROWS)."""
+        cutoff = (now if now is not None else _now()) - self.settings()["log_retention_days"] * 86400
+        with self.lock:
+            removed = self.conn.execute("DELETE FROM logs WHERE ts < ?", (cutoff,)).rowcount
+            over = self.conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0] - MAX_LOG_ROWS
+            if over > 0:
+                removed += self.conn.execute("DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY ts, id LIMIT ?)",
+                                             (over,)).rowcount
+            self.conn.commit()
+        return removed
 
     # ------------------------------------------------------------ effects
     @staticmethod

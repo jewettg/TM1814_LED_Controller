@@ -151,6 +151,16 @@ def test_schedules_and_logs(service, capsys):
     out = capsys.readouterr().out
     assert "Nightly" in out and "every day" in out
     assert run("logs", "--no-color", "-n", "5") == 0
+    db.add_log(time.time() - 3 * 86400, "WARNING", "tm1814.test", "something three days ago")
+    db.add_log(time.time() - 3600, "ERROR", "tm1814.test", "something an hour ago")
+    capsys.readouterr()
+    assert run("logs", "--no-color", "--since", "7d", "--level", "warning", "--grep", "something") == 0
+    out = capsys.readouterr().out
+    assert "three days ago" in out and "an hour ago" in out and "2 of 2 matching" in out and "kept for 60 days" in out
+    assert run("logs", "--no-color", "--since", "6h", "--grep", "something") == 0
+    out = capsys.readouterr().out
+    assert "an hour ago" in out and "three days ago" not in out
+    assert run("logs", "--no-color", "--since", "banana") == 2
 
 
 def test_direct_commands_need_the_password_first_and_use_the_fake_controller(service, capsys):

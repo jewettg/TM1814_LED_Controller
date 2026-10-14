@@ -69,7 +69,7 @@ export async function settings(ctx) {
     const body = {
       controller_host: st.controller_host, controller_port: st.controller_port, led_count: st.led_count, fps: st.fps, min_gap_ms: st.min_gap_ms,
       max_groups: st.max_groups, brightness: st.brightness, idle_action: st.idle_action, idle_color: st.idle_color,
-      timezone: st.timezone, latitude: st.latitude, longitude: st.longitude,
+      timezone: st.timezone, latitude: st.latitude, longitude: st.longitude, log_retention_days: st.log_retention_days,
     };
     try {
       const r = await api.put('/settings', body);
@@ -92,6 +92,7 @@ export async function settings(ctx) {
           num('brightness', 'Master brightness (%)', 'Scales everything the lights show.', { min: 0, max: 100 }),
           num('fps', 'Frames per second', 'For animated effects. Higher is smoother but sends more commands (1 to 15).', { min: 1, max: 15 }),
           num('min_gap_ms', 'Pause between commands (ms)', 'Raise this if the controller drops commands.', { min: 5, max: 500 }),
+          num('log_retention_days', 'Keep logs for (days)', 'Older log lines are deleted automatically. At least 31 days.', { min: 31, max: 3650 }),
           num('max_groups', 'Most colors per frame', 'Each distinct color in a frame costs one command (2 to 30).', { min: 2, max: 30 })),
         h('div', { class: 'form-grid' },
           F('When nothing is scheduled', idleSel, 'What the lights do after a run list ends or you press Stop.', idleSel.id), idleColorWrap)),

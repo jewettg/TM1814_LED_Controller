@@ -21,7 +21,7 @@ from .auth import COOKIE, Auth
 from .config import default_data_dir
 from .controller import Controller, ControllerError, SimulatedController, discover
 from .db import Conflict, Database, NotFound
-from .runner import LogBuffer, Runner, ScheduleManager
+from .runner import DBLogHandler, Runner, ScheduleManager
 from .seed import seed_catalog
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -131,7 +131,8 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     s = db.settings()
     ctrl_cls = SimulatedController if simulate else Controller
     controller = ctrl_cls(s["controller_host"], s["controller_port"])
-    logbuf = LogBuffer()
+    db.prune_logs()                                   # at startup too, in case the program was off for a while
+    logbuf = DBLogHandler(db)
     logging.getLogger("tm1814").setLevel(logging.INFO)
     logging.getLogger("tm1814").addHandler(logbuf)
     runner = Runner(db, controller)
@@ -251,8 +252,16 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
         return fx.kinds_schema()
 
     @app.get("/api/logs")
-    def logs(count: int = 200):
-        return logbuf.tail(max(1, min(500, count)))
+    def logs(count: int = 200, since: Optional[float] = None, until: Optional[float] = None,
+             level: Optional[str] = None, q: Optional[str] = None):
+        """The newest `count` matching lines, oldest first. since/until are Unix times (seconds)."""
+        return db.query_logs(since, until, level, q, count)["entries"]
+
+    @app.get("/api/logs/query")
+    def logs_query(since: Optional[float] = None, until: Optional[float] = None, level: Optional[str] = None,
+                   q: Optional[str] = None, limit: int = 1000):
+        """Like /api/logs but with the totals: {entries, total, limit, truncated, oldest, newest, stored, retention_days}."""
+        return db.query_logs(since, until, level, q, limit)
 
     # ---------------------------------------------------------------- settings / controller
     @app.get("/api/settings")

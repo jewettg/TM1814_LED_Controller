@@ -141,7 +141,20 @@ For sunrise/sunset to be exact, enter your **latitude, longitude and time zone**
 
 ### Settings
 
-The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); and your time zone and location.
+The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); your time zone and location; and **how long to keep logs**.
+
+### Logs
+
+Everything the program does (what started and stopped, schedule decisions, controller problems) is written to a log that **survives restarts and is kept for at least a month**. The default is 60 days, and you can raise it in **Settings** (the minimum is 31 days). Older lines are deleted automatically, oldest first.
+
+On the **Logs** page choose what to see:
+
+* **Show**: last hour, last 24 hours, last 7 days, last 30 days, everything kept, or a **custom range** (pick the start and end date and time).
+* **Which messages**: everything, warnings and errors, or errors only.
+* **Search** the text of the messages, and choose the **most lines** to show (500 to 5000). If more lines match than that, the newest are shown and a note tells you to narrow the range.
+* **Download as CSV** saves what is on screen, handy for sharing or a spreadsheet.
+
+The same is available from the command line, for example `tm1814-led logs --since 6h --level warning` (see below).
 
 ---
 
@@ -246,7 +259,7 @@ The service restarts at boot and the schedules pick up again. A controller that 
 | Lights do something odd after changing settings | Press **Stop**, wait a few seconds and play again. |
 | I forgot the password | Run the installer again with a new one: `python3 -m tm1814_led --install --generate-password` (or `--password YOUR_NEW_PASSWORD`). Your data is kept. |
 | Sunset times look wrong | Set your **latitude, longitude and time zone** in Settings. |
-| Something is not working and I want details | *Logs* in the web page, or `journalctl -u tm1814-led -f` on Linux. |
+| Something is not working and I want details | The **Logs** page (choose a range such as the last hour), `tm1814-led logs --since 1h --level warning`, or `journalctl -u tm1814-led -f` on Linux. |
 
 ---
 
@@ -268,7 +281,7 @@ tm1814-led status               # what's playing, controller state, next schedul
 | `play "name"` | play an effect or run list by name, part of a name, or id (`--effect` / `--runlist` to be specific, `--for 120` to stop an effect after two minutes) |
 | `stop`, `next`, `pause`, `resume` | control playback (`stop` turns the lights off unless you chose another "when idle" action) |
 | `brightness 60` | master brightness |
-| `logs [-n 50] [-f]` | recent log lines, or follow them |
+| `logs` | the log. `--since 6h` (or `30m`, `2d`, `1w`, `today`, `yesterday`, `2026-10-13`, `"2026-10-13 18:00"`), `--until`, `--level warning`, `--grep text`, `-n 200` for more lines, `-f` to follow new ones |
 | **Talk to the controller directly** | |
 | `discover` | find controllers on your network |
 | `state` | power, what it is showing, LED count, firmware |

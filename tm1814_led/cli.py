@@ -126,6 +126,7 @@ examples:
   tm1814-led status                      what is playing, controller state, next schedule
   tm1814-led play "Halloween - Embers"   play an effect (or a run list: tm1814-led play "Halloween show")
   tm1814-led stop                        stop and turn the lights off
+  tm1814-led logs --since 6h --level warning     what went wrong in the last six hours
   tm1814-led effects ghost               search the catalog
   tm1814-led color orange                show a solid color directly on the controller
   tm1814-led test halves                 light the strip to find where the second half starts
@@ -182,10 +183,13 @@ def build_parser() -> argparse.ArgumentParser:
     add("resume", "resume after pause", [svc], "service")
     b = add("brightness", "set master brightness", [svc], "service")
     b.add_argument("value", type=int, help="0-100")
-    lg = add("logs", "show recent log lines", [svc], "service")
-    lg.add_argument("-n", "--lines", type=int, default=30)
-    lg.add_argument("-f", "--follow", action="store_true", help="keep printing new lines")
-
+    lg = add("logs", "show the log (kept for the retention period set in Settings)", [svc], "service")
+    lg.add_argument("-n", "--lines", type=int, default=50, help="most lines to show (the newest ones; default 50)")
+    lg.add_argument("--since", metavar="WHEN", help="start of the range: 30m, 6h, 2d, 1w, today, yesterday, 2026-10-13 or '2026-10-13 18:00'")
+    lg.add_argument("--until", metavar="WHEN", help="end of the range (same forms; default: now)")
+    lg.add_argument("--level", choices=["info", "warning", "error"], help="this level and above (default: everything)")
+    lg.add_argument("--grep", metavar="TEXT", help="only lines containing this text")
+    lg.add_argument("-f", "--follow", action="store_true", help="keep printing new lines (Ctrl-C to stop)")
     add("login", "sign in now (every command asks for the password once per terminal session)", [svc], "session")
     add("logout", "forget this terminal session's sign-in", [svc], "session")
     add("discover", "find controllers on the network", [svc], "direct")
@@ -411,26 +415,66 @@ def cmd_brightness(a, out: Out) -> int:
     return 0
 
 
+def parse_when(text: str, now: Optional[dt.datetime] = None) -> float:
+    """'30m', '6h', '2d', '1w' (that long ago), 'today', 'yesterday', or a local date / date and time -> Unix time."""
+    now = now or dt.datetime.now()
+    t = text.strip().lower()
+    if t == "now":
+        return now.timestamp()
+    if t in ("today", "yesterday"):
+        day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return (day - dt.timedelta(days=1 if t == "yesterday" else 0)).timestamp()
+    if t and t[-1] in "smhdw" and t[:-1].replace(".", "", 1).isdigit():
+        seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[t[-1]]
+        return (now - dt.timedelta(seconds=float(t[:-1]) * seconds)).timestamp()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+        try:
+            return dt.datetime.strptime(text.strip(), fmt).timestamp()
+        except ValueError:
+            continue
+    raise ValueError(f"cannot understand the time {text!r}: use 30m, 6h, 2d, 1w, today, yesterday, 2026-10-13 or '2026-10-13 18:00'")
+
+
 def cmd_logs(a, out: Out) -> int:
+    from urllib.parse import urlencode
     cl = _service(a, out)
-    seen = 0.0
+    params: Dict[str, Any] = {"limit": max(1, a.lines)}
+    if a.since:
+        params["since"] = parse_when(a.since)
+    if a.until:
+        params["until"] = parse_when(a.until)
+    if a.level:
+        params["level"] = a.level.upper()
+    if a.grep:
+        params["q"] = a.grep
     level_style = {"WARNING": "yellow", "ERROR": "red", "CRITICAL": "red"}
+    seen = 0.0
+    first = True
     while True:
-        lines = [l for l in cl.get(f"/api/logs?count={max(1, a.lines)}") if l["ts"] > seen]
-        for l in lines:
+        res = cl.get("/api/logs/query?" + urlencode(params))
+        for l in res["entries"]:
+            if l["ts"] <= seen:
+                continue
             if a.json:
                 out.json(l)
             else:
-                stamp = dt.datetime.fromtimestamp(l["ts"]).strftime("%H:%M:%S")
+                stamp = dt.datetime.fromtimestamp(l["ts"]).strftime("%b %d %H:%M:%S").replace(" 0", "  ")
                 out.say(out.p(stamp, "dim") + "  " + out.p(l["level"][:4].ljust(4), level_style.get(l["level"], "dim")) + "  " + l["msg"])
             seen = max(seen, l["ts"])
+        if first and not a.json:
+            note = f"{len(res['entries'])} of {res['total']} matching line(s)"
+            if res["truncated"]:
+                note += f" — showing the newest {res['limit']}; use -n, --since or --grep to narrow"
+            out.say(out.p(note + f". Logs are kept for {res['retention_days']} days.", "dim"))
+        first = False
         if not a.follow:
             return 0
         try:
             time.sleep(2)
         except KeyboardInterrupt:
             return 0
-        a.lines = 50
+        params["since"] = max(seen, params.get("since", 0.0))
+        params["limit"] = 200
 
 
 # ---------------------------------------------------------------- commands: direct to the controller

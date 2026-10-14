@@ -100,7 +100,8 @@ def test_non_looping_run_list_ends_and_goes_idle(rig):
     runner.on_end = lambda plan, reason: ended.append(reason)
     runner.play_runlist(make_list(db, loop=False, durations=(1, 1))["id"])
     assert wait_for(lambda: runner.status()["state"] == "idle", 8)
-    assert "finished" in ended and ctrl.is_on is False
+    assert wait_for(lambda: ctrl.is_on is False, 3)        # the idle action runs just after the state changes
+    assert "finished" in ended
 
 
 def test_new_play_replaces_current(rig):

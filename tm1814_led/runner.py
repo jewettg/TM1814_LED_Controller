@@ -6,13 +6,12 @@ tells the runner to start or stop it. Manual plays always win over schedules unt
 """
 from __future__ import annotations
 
-import collections
 import datetime as dt
 import logging
 import random
 import threading
 import time
-from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from . import effects as fx
 from . import scheduler as sch
@@ -25,18 +24,18 @@ HEALTH_INTERVAL = 30.0
 SCRIBBLE_PATTERN = 0x66  # state "pattern" byte while the strip is in per-pixel mode
 
 
-class LogBuffer(logging.Handler):
-    """Keeps the last few hundred log lines for the web UI."""
+class DBLogHandler(logging.Handler):
+    """Writes every log line of the program to the database, so the logs survive restarts."""
 
-    def __init__(self, size: int = 500):
+    def __init__(self, db: Database):
         super().__init__(logging.INFO)
-        self.entries: Deque[dict] = collections.deque(maxlen=size)
+        self.db = db
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.entries.append({"ts": record.created, "level": record.levelname, "msg": record.getMessage()})
-
-    def tail(self, count: int = 200) -> List[dict]:
-        return list(self.entries)[-count:]
+        try:
+            self.db.add_log(record.created, record.levelname, record.name, record.getMessage())
+        except Exception:   # logging must never break the program (for example while the database is closing)
+            pass
 
 
 class Runner:
@@ -453,9 +452,15 @@ class ScheduleManager:
         return out[:count]
 
     def _loop(self) -> None:
+        last_prune = 0.0
         while not self._stop.is_set():
             try:
                 self.evaluate()
+                if time.time() - last_prune > 3600:        # once an hour: drop logs older than the retention period
+                    last_prune = time.time()
+                    removed = self.db.prune_logs()
+                    if removed:
+                        log.info("removed %d log lines older than %d days", removed, self.db.settings()["log_retention_days"])
             except Exception:
                 log.exception("schedule evaluation failed")
             self._stop.wait(self.interval)

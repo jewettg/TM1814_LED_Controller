@@ -391,7 +391,7 @@ Data model (the `data` parameter):
 
 ## 9. Data model
 
-SQLite, schema version 1 (`PRAGMA user_version`), WAL mode, foreign keys on. File: `<data dir>/tm1814.db`.
+SQLite, schema version 2 (`PRAGMA user_version`; older files are upgraded automatically on start), WAL mode, foreign keys on. File: `<data dir>/tm1814.db`.
 
 ```
 settings(key PK, value JSON)
@@ -399,6 +399,7 @@ effects(id, name UNIQUE NOCASE, kind, params JSON, description, seed_key, create
 runlists(id, name UNIQUE NOCASE, loop, shuffle, notes, created, updated)
 runlist_items(id, runlist_id → runlists CASCADE, position, effect_id → effects RESTRICT, duration_sec)
 schedules(id, name UNIQUE NOCASE, runlist_id → runlists RESTRICT, enabled, priority, spec JSON, created, updated)
+logs(id, ts REAL, lvl INTEGER, level TEXT, logger TEXT, msg TEXT)      -- index on ts; see "Logs" below
 ```
 
 * Names are unique case-insensitively within a table (HTTP 409 on conflict).
@@ -421,6 +422,7 @@ schedules(id, name UNIQUE NOCASE, runlist_id → runlists RESTRICT, enabled, pri
 | `idle_color` | `#ff5a00` | color for `solid` |
 | `timezone` | `""` | IANA name; empty = this machine's zone |
 | `latitude`, `longitude` | `null` | for sunrise/sunset |
+| `log_retention_days` | 60 | log lines older than this are deleted (minimum 31) |
 | `seeded_keys` | `[]` | internal: which default catalog entries were already created |
 
 ### Seeding
@@ -498,7 +500,7 @@ plan = { source: "manual" | "schedule:<id>", name, runlist_id, loop, shuffle, wi
 
 Status payload (`GET /api/status`) includes `state` (`idle`/`running`/`paused`), `source`, `plan`, `item` (`index`, `count`, `name`, `kind`, `native`, `duration`, `elapsed`), `fps_target`, `fps_actual`, a `controller` block (host, port, connected, `led_count`, `last_error`, `commands_per_second`, `commands_sent`, `brightness`, `power`, `model`, `firmware`, `simulated`), `uptime_sec`, `version`, `active_schedule`, `upcoming` (next windows), `needs_setup`, and `has_location`.
 
-Logging: logger `tm1814.*` at INFO; a ring buffer of the last 500 lines is served by `GET /api/logs`.
+**Logs.** Every record of the `tm1814.*` loggers at INFO or above is written to the `logs` table by `DBLogHandler` (so history survives restarts; the same lines also go to the console/journal). Retention: lines older than `log_retention_days` (default 60, never below 31) are deleted **at startup and then hourly** by the schedule thread, and a safety net of 500,000 rows drops the oldest beyond that. A logging failure (for example while the database is closing) is swallowed and never affects the program. Queries (`Database.query_logs`) filter by time range, minimum level, and a literal text search (`%` and `_` are escaped), and when more lines match than `limit` they return the **newest** `limit` lines (oldest first) with `total`, `truncated`, the oldest and newest stored times, and the retention.
 
 ---
 
@@ -525,7 +527,8 @@ Interactive documentation is served by FastAPI at `/docs` (and `/openapi.json`) 
 | `POST /api/login`, `POST /api/logout`, `GET /api/auth` | sign in `{password}` / sign out / `{required, authenticated}` (public; see section 13) |
 | `GET /api/meta` | `{version, simulated, timezones[], weekdays[], repeat_types[], led_count, builtin_patterns[]}` |
 | `GET /api/effect-kinds` | schema for every effect kind (drives the editor forms) |
-| `GET /api/logs?count=200` | recent log lines `{ts, level, msg}` |
+| `GET /api/logs?count=200&since=&until=&level=&q=` | the newest `count` matching lines, oldest first: `[{ts, level, logger, msg}]`. `since`/`until` are Unix times in seconds, `level` is the minimum (`INFO`, `WARNING`, `ERROR`), `q` is a text search |
+| `GET /api/logs/query?limit=1000&since=&until=&level=&q=` | the same with totals: `{entries, total, limit, truncated, oldest, newest, stored, retention_days}` (used by the Logs page) |
 
 ### Settings and controller
 
@@ -634,7 +637,8 @@ tm1814-led install|uninstall|service      same as --install / --uninstall / --se
  service commands (via the running web service):
 tm1814-led status | effects [text] [--native|--fixed|--animated] | runlists | schedules
 tm1814-led play NAME [--effect|--runlist] [--for SECONDS] | stop | next | pause | resume
-tm1814-led brightness 0-100 | logs [-n N] [-f]
+tm1814-led brightness 0-100
+tm1814-led logs [-n N] [--since WHEN] [--until WHEN] [--level info|warning|error] [--grep TEXT] [-f]
  direct commands (straight to the controller; sign-in still required):
 tm1814-led discover | state | on | off | color COLOR [--white LEVEL] | test [PATTERN [N]] [--delay S]
  session:
@@ -674,7 +678,8 @@ pytest -q
 | `test_controller.py` | quantization/grouping, diff painting, brightness, forbidden commands, a real TCP socket against a fake controller, connection errors |
 | `test_effects.py` | every kind renders valid frames, determinism, parameter validation, frame-animation timing (cut/fade/loop/pingpong/once) |
 | `test_scheduler.py` | every repeat rule, month-end clamping, nth weekdays, overnight windows, sun times (Austin), priority |
-| `test_db.py` | CRUD, uniqueness, in-use protection, settings validation, seeding |
+| `test_db.py` | CRUD, uniqueness, in-use protection, settings validation, seeding, upgrading old saved effects |
+| `test_logs.py` | log ranges, level and text filters, truncation, retention and pruning, the row cap, surviving a restart, upgrading an old database, the handler, the API and CLI time parsing |
 | `test_runner.py` | playing/looping/next/pause/stop, idle actions, schedule start/stop, user-stop suppression, priority, restart on edit |
 | `test_api.py` | every route group end to end with the simulated controller, auth, error codes |
 | `test_installer.py` | file contents per OS, mode selection, address detection (VPN-safe), a password is always set, a full install against a fake command runner, dry runs |

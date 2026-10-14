@@ -138,6 +138,9 @@ export function fmtWindow(startIso, endIso) {
   const sameDay = fmt({ year: 'numeric', month: 'numeric', day: 'numeric' }, a) === fmt({ year: 'numeric', month: 'numeric', day: 'numeric' }, b);
   return fmtDateTime(startIso) + ' to ' + (sameDay ? fmtTime(endIso) : fmtDateTime(endIso));
 }
+export function fmtStamp(ts) {  // date and time with seconds, in the display time zone (for logs)
+  return fmt({ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }, new Date(ts * 1000));
+}
 export function fmtClock(ts) {
   return new Date(ts * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }

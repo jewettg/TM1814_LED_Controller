@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+* **Logs are kept in the database** and survive restarts. Retention is 60 days by default and never less than 31
+  (Settings); older lines are deleted automatically (at startup and hourly), oldest first.
+* **Logs page**: choose the range (hour / day / week / month / everything / custom from-to), the level, a text search and
+  the line limit, with totals, a truncation notice and CSV download. `tm1814-led logs` gains `--since`, `--until`,
+  `--level` and `--grep`. New API: `GET /api/logs/query`; `/api/logs` accepts `since`, `until`, `level`, `q`.
+
 * **Fixed effects** (a third family next to controller-native and animated): a picture painted once that simply
   stays lit. New kind *Every Nth pixel* with the white-LED option; the catalog gains **Night (Bright / Medium / Low /
   Dim)** (every 3rd / 4th / 5th / 6th pixel).
