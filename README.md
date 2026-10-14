@@ -96,7 +96,7 @@ There are three kinds, and the page labels each one:
 
 Use native effects for fast, smooth motion, fixed effects for steady night lighting, and animated ones when you want something the controller can't do on its own.
 
-**Night lights.** The catalog comes with four fixed night effects that light every 3rd, 4th, 5th or 6th pixel with the strip's white LED (a bigger number means fewer lights, so a dimmer glow), and **Night (Hourly 4-6)**, an animated one that steps through every 4th, 5th and 6th pixel, changing on the hour and looping. Open any of them to change the color, the white brightness, which pixel starts the pattern, or (for the hourly one) the range and how often it changes.
+**Night lights.** The catalog comes with four fixed night effects that light every 3rd, 4th, 5th or 6th pixel with the strip's white LED (a bigger number means fewer lights, so a dimmer glow), and **Night (Hourly 4-6)**, an animated one that steps through every 4th, 5th and 6th pixel, changing on the hour and looping (the editor's preview is fast-forwarded and says so). Open any of them to change the color, the white brightness, which pixel starts the pattern, or (for the hourly one) the range and how often it changes.
 
 ### The effect editor
 

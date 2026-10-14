@@ -7,7 +7,7 @@ import { StripView, FramePlayer } from './strip.js';
  * getRequest() -> {kind, params, seconds?, fps?} or null when there is nothing to preview.
  * Call .refresh() whenever the (unsaved) parameters change; calls are debounced by 400 ms.
  */
-export function previewPanel({ n, getRequest, defaultSeconds = 20, defaultFps = 5, showControls = true, unavailableText = '' }) {
+export function previewPanel({ n, getRequest, defaultSeconds = 20, defaultFps = 5, showControls = true, unavailableText = '', note = '' }) {
   const canvas = h('canvas', { role: 'img', 'aria-label': 'Preview of the effect on the strip' });
   const box = h('div', { class: 'strip-box' }, canvas);
   const msg = h('div', { class: 'help', 'aria-live': 'polite' });
@@ -48,7 +48,8 @@ export function previewPanel({ n, getRequest, defaultSeconds = 20, defaultFps = 
 
   const controls = showControls ? h('div', { class: 'preview-controls' }, playBtn,
     h('label', null, 'Length', secIn, 's'), h('label', null, 'Speed', fpsIn, 'fps')) : null;
-  const el = h('div', null, box, controls, msg, err);
+  const noteEl = note ? h('p', { class: 'preview-note', role: 'note' }, h('strong', null, 'Note: '), note) : null;
+  const el = h('div', null, box, controls, noteEl, msg, err);
   return {
     el, refresh, runNow: run, player, view,
     setPlaying(v) { playing = v; sync(); },

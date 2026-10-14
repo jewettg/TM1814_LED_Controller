@@ -329,7 +329,7 @@ An effect = **kind** (code, `effects/`) + **parameters** (JSON in the database).
 | `gradient` | animated | yes | 2–12 colors, length, period, direction |
 | `frames` | animated | yes | custom frame animation (8.3) |
 | `nth` | **fixed** | yes (1 frame) | light every Nth pixel: N, first lit pixel, white LED on/off + level, color, background |
-| `nth_step` | animated | yes | like `nth`, but N steps through `first`..`last` (default 4, 5, 6) every `change_minutes` (default 60), by the clock or by elapsed time |
+| `nth_step` | animated | yes | like `nth`, but N steps through `first`..`last` (default 4, 5, 6) every `change_hours` (1–24, default 1), by the clock or by elapsed time |
 
 `GET /api/effect-kinds` returns the full schema. The web UI builds its editor forms from it.
 

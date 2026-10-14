@@ -95,6 +95,7 @@ class Effect:
     native = False         # True: runs on the controller itself
     static = False         # True: one picture painted once (a "fixed" effect); frame(0) is the picture
     previewable = True     # False: cannot be simulated here (shown without a preview)
+    preview_note = ""      # shown under the browser preview, e.g. to say the preview is sped up
     params: Sequence[Param] = ()
 
     def __init__(self, params: Optional[dict], led_count: int, seed: Optional[int] = None):
@@ -114,10 +115,17 @@ class Effect:
     def schema(cls) -> dict:
         return {"kind": cls.kind, "label": cls.label, "description": cls.description, "category": cls.category,
                 "family": cls.family(), "native": cls.native, "static": cls.static, "previewable": cls.previewable,
+                "preview_note": cls.preview_note,
                 "params": [p.to_dict() for p in cls.params]}
 
     @classmethod
+    def upgrade_params(cls, params: dict) -> dict:
+        """Rename or convert parameters saved by an older version (override when a parameter changes)."""
+        return params
+
+    @classmethod
     def clean(cls, params: dict) -> dict:
+        params = cls.upgrade_params(dict(params))
         out: Dict[str, Any] = {}
         for p in cls.params:
             out[p.key] = p.clean(params[p.key]) if p.key in params and params[p.key] is not None else p.default

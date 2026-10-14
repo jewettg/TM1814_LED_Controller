@@ -195,9 +195,10 @@ def test_stepping_spacing_follows_the_clock_on_the_hour(monkeypatch):
 
 
 def test_stepping_options_and_elapsed_time_mode():
-    e = fx.build("nth_step", {"first": 3, "last": 5, "change_minutes": 10, "follow_clock": False}, N)
+    e = fx.build("nth_step", {"first": 3, "last": 5, "change_hours": 2, "follow_clock": False}, N)
     spacing = lambda t: [i for i, p in enumerate(e.frame(t)) if len(p) == 4][1]     # noqa: E731
-    assert [spacing(t) for t in (0, 599, 600, 1200, 1800)] == [3, 3, 4, 5, 3]
+    h = 3600
+    assert [spacing(t) for t in (0, 2 * h - 1, 2 * h, 4 * h, 6 * h)] == [3, 3, 4, 5, 3]
     swapped = fx.build("nth_step", {"first": 6, "last": 4, "follow_clock": False}, N)
     assert [i for i, p in enumerate(swapped.frame(0)) if len(p) == 4][1] == 4        # a reversed range still works
 
@@ -211,3 +212,31 @@ def test_stepping_preview_is_fast_and_fixed_preview_is_one_frame():
 def test_white_led_pixels_preview_as_warm_white():
     frame = fx.render_preview("nth", {"every": 2}, 4, 1, 5)[0]
     assert frame[:6] == "fff1de" and frame[6:12] == "000000"
+
+
+def test_stepping_can_never_change_more_often_than_hourly():
+    spec = next(p for p in fx.REGISTRY["nth_step"].params if p.key == "change_hours")
+    assert spec.min == 1 and spec.default == 1 and spec.unit == "hours"
+    assert fx.build("nth_step", {"change_hours": 0}, N).p["change_hours"] == 1          # clamped up to one hour
+    assert fx.build("nth_step", {"change_hours": 99}, N).p["change_hours"] == 24
+
+
+def test_two_hour_steps_change_on_even_hours(monkeypatch):
+    import datetime as dt
+    e = fx.build("nth_step", {"change_hours": 2}, N)
+    def at(h):
+        monkeypatch.setattr(e, "now", lambda: dt.datetime(2026, 10, 13, h, 30))
+        return [i for i, p in enumerate(e.frame(0)) if len(p) == 4][1]
+    assert [at(h) for h in (0, 1, 2, 3, 4, 5)] == [4, 4, 5, 5, 6, 6]
+
+
+def test_effects_saved_with_minutes_are_converted_to_hours():
+    assert fx.build("nth_step", {"change_minutes": 60}, N).p["change_hours"] == 1
+    assert fx.build("nth_step", {"change_minutes": 180}, N).p["change_hours"] == 3
+    assert fx.build("nth_step", {"change_minutes": 10}, N).p["change_hours"] == 1       # sub-hourly becomes hourly
+    assert "change_minutes" not in fx.build("nth_step", {"change_minutes": 60}, N).p
+
+
+def test_the_stepping_preview_explains_that_it_is_fast_forwarded():
+    schema = {k["kind"]: k for k in fx.kinds_schema()}
+    assert "fast-forwarded" in schema["nth_step"]["preview_note"] and schema["nth"]["preview_note"] == ""

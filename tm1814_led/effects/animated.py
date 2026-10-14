@@ -308,13 +308,16 @@ class SteppingNth(Effect):
     category = "Animated"
     description = ("Like 'Every Nth pixel', but the spacing steps through a range on a timer: by default 4, then 5, "
                    "then 6 pixels apart, changing every hour and looping. Needs this program running to make the changes.")
+    preview_note = ("Preview only: it is fast-forwarded to show each spacing for 3 seconds. On the lights, each spacing "
+                    "stays for the whole time set under 'Change the spacing every' (default: one hour).")
     params = (
         Param("first", "Smallest spacing", "int", 4, min=2, max=60, help="Every Nth pixel, starting here..."),
         Param("last", "Largest spacing", "int", 6, min=2, max=60, help="...up to this, then loop back to the start."),
-        Param("change_minutes", "Change every", "int", 60, min=1, max=1440, unit="minutes"),
+        Param("change_hours", "Change the spacing every", "int", 1, min=1, max=24, unit="hours",
+              help="How long each spacing stays before the next one. 1 = it changes once an hour."),
         Param("follow_clock", "Change on the clock", "bool", True,
-              help="On: changes at fixed times (on the hour for 60 minutes), using this computer's clock. "
-                   "Off: counts from the moment the effect starts."),
+              help="On: changes at fixed times (on the hour for 1 hour; at 0:00, 2:00, 4:00... for 2 hours), using this "
+                   "computer's clock. Off: counts from the moment the effect starts."),
         Param("offset", "First lit pixel", "int", 0, min=0, max=59),
         Param("use_white", "Use the white LED", "bool", True),
         Param("white_level", "White LED brightness", "int", 100, min=1, max=100, unit="%"),
@@ -322,20 +325,29 @@ class SteppingNth(Effect):
         Param("background", "Color of the other pixels", "color", "#000000"),
     )
 
+    @classmethod
+    def upgrade_params(cls, params: dict) -> dict:
+        if "change_minutes" in params and "change_hours" not in params:     # saved by version 0.1.0 (minutes)
+            try:
+                params["change_hours"] = max(1, round(float(params["change_minutes"]) / 60))
+            except (TypeError, ValueError):
+                pass
+        params.pop("change_minutes", None)
+        return params
+
     def now(self) -> dt.datetime:
         return dt.datetime.now()
 
     def spacing(self, t: float) -> int:
         lo, hi = sorted((self.p["first"], self.p["last"]))
         values = list(range(lo, hi + 1))
-        step = self.p["change_minutes"]
+        hours = self.p["change_hours"]
         if self.preview:                       # the browser preview cannot wait an hour: one step per 3 seconds
             slot = int(t // 3)
         elif self.p["follow_clock"]:
-            now = self.now()
-            slot = (now.hour * 60 + now.minute) // step
+            slot = self.now().hour // hours    # whole hours since midnight, so it changes exactly on the hour
         else:
-            slot = int(t // (step * 60))
+            slot = int(t // (hours * 3600))
         return values[slot % len(values)]
 
     def frame(self, t: float) -> List[Pixel]:

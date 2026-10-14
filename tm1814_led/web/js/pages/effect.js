@@ -52,7 +52,7 @@ export async function effectEditor(ctx) {
     form = buildParamForm(schema, work.params, onParams);
     work.params = { ...work.params, ...form.values };
     const req = () => (schema.previewable ? { kind: kindName, params: work.params } : null);
-    preview = previewPanel({ n: meta.led_count || 250, getRequest: req, unavailableText: schema.previewable ? '' : 'This animation runs on the controller itself, so it cannot be previewed here. Use "Play on lights" to see it.' });
+    preview = previewPanel({ n: meta.led_count || 250, getRequest: req, note: schema.preview_note || '', unavailableText: schema.previewable ? '' : 'This animation runs on the controller itself, so it cannot be previewed here. Use "Play on lights" to see it.' });
     ctx.onLeave(() => preview.destroy());
     left = h('div', { class: 'card' }, h('h2', null, 'Settings'), form.el);
     right = h('div', { class: 'card sticky' }, h('h2', null, 'Preview'),
