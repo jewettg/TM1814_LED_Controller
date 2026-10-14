@@ -161,15 +161,36 @@ class Controller:
             self._counter = (self._counter + 1) & 0xFF
             self._send(P.wrap(inner, self._counter))
 
-    def _send(self, data: bytes) -> None:
-        self._ensure()
-        self._pace()
+    def _check_alive(self) -> None:
+        """The controller closes idle connections. If it did, drop ours now so the send below starts on a fresh one."""
+        if self._sock is None:
+            return
         try:
-            self._transmit(data)
-        except OSError as exc:
+            while select.select([self._sock], [], [], 0)[0]:
+                chunk = self._sock.recv(4096)
+                if not chunk:                       # the controller closed the connection
+                    log.info("the controller closed the idle connection; reconnecting")
+                    self.close()
+                    return
+        except OSError:
             self.close()
-            self.last_error = f"send failed: {exc}"
-            raise ControllerError(self.last_error) from exc
+
+    def _send(self, data: bytes) -> None:
+        for attempt in (1, 2):
+            self._ensure()
+            self._check_alive()
+            if self._sock is None:                  # closed by the check: connect again
+                self._ensure()
+            self._pace()
+            try:
+                self._transmit(data)
+                break
+            except OSError as exc:
+                self.close()
+                if attempt == 2:
+                    self.last_error = f"send failed: {exc}"
+                    raise ControllerError(self.last_error) from exc
+                log.info("send failed (%s); reconnecting and trying once more", exc)
         now = time.monotonic()
         self._last_send = now
         self.commands_sent += 1
@@ -332,6 +353,9 @@ class SimulatedController(Controller):
 
     def _drain(self) -> bytes:
         return b""
+
+    def _check_alive(self) -> None:
+        pass
 
     def query_state(self, timeout: float = 2.5) -> Optional[State]:
         with self._lock:

@@ -171,3 +171,49 @@ def test_white_pixels_follow_master_brightness_and_are_never_quantized():
     paint = [s[10:-1] for s in c.sent if s[10:12] == bytes([0xE1, 0x26])][-1]
     assert paint[11] == 50
     assert quantize((0, 0, 0, 37), 64) == (0, 0, 0, 37)
+
+
+class DroppingController(FakeController):
+    """Closes each client connection after `drop_after` bytes arrive, like a controller that drops idle connections."""
+
+    def __init__(self):
+        self.connections = 0
+        self.conns = []
+        super().__init__()
+
+    def _client(self, conn):
+        self.connections += 1
+        self.conns.append(conn)
+        super()._client(conn)
+
+    def drop_all(self):
+        for c in self.conns:
+            try:
+                c.shutdown(socket.SHUT_RDWR); c.close()
+            except OSError:
+                pass
+        self.conns = []
+
+
+def test_an_idle_connection_closed_by_the_controller_is_replaced_without_an_error():
+    import time
+    fake = DroppingController()
+    try:
+        c = Controller("127.0.0.1", fake.port, min_gap=0)
+        c.power(True)
+        deadline = time.time() + 3
+        while time.time() < deadline and not fake.received:
+            time.sleep(0.02)
+        assert fake.connections == 1
+        fake.received.clear()
+        fake.drop_all()                              # the controller hangs up while we are idle
+        time.sleep(0.3)
+        for i in range(3):                           # several sends in a row, none may raise
+            c.power(i % 2 == 0)
+        deadline = time.time() + 5
+        while time.time() < deadline and len(fake.received) < 3:
+            time.sleep(0.05)
+        assert fake.connections == 2                 # exactly one reconnect
+        assert len(fake.received) == 3 and c.last_error == ""
+    finally:
+        fake.close()

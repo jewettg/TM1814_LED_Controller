@@ -113,6 +113,7 @@ Discovery reply example (documentation address): `192.168.1.50,AABBCCDDEEFF,AK00
 * Use **one persistent TCP connection**. Rapidly opening and closing connections makes the controller stop accepting new ones for a few seconds.
 * The controller **pushes unsolicited state frames** back on the socket (for example after remote-control or app changes). The client must read and discard these periodically, or buffers fill. `Controller._drain()` does so every 20 sends and before every query.
 * **Flooding stalls it.** Sending about 75 paint commands per second made the controller stop reading from the socket (send timeouts) and it briefly reported itself off before recovering by itself. A pause of ~30 ms between commands (about 30 commands/s) is stable and was used for all live testing. This project enforces the gap globally in `Controller._pace()`; it is the `min_gap_ms` setting (minimum 5).
+* The controller **closes idle connections** (seen in real logs as `Broken pipe` on the first send after a quiet period). Before every send the client checks whether the peer closed the socket and, if so, reconnects first; a send that still fails is retried once on a fresh connection, so an idle gap never shows up as an error or a delay.
 * After `E1 23` (scribble init) wait about 0.4 s before painting.
 * Only one controller client at a time is advisable; the vendor app and this program should not stream simultaneously.
 

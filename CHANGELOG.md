@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+* The controller closes idle connections; the program now notices and reconnects quietly instead of failing the first
+  send after a quiet period (which cost about 3 seconds at the start of a scheduled run).
+
 * **Logs are kept in the database** and survive restarts. Retention is 60 days by default and never less than 31
   (Settings); older lines are deleted automatically (at startup and hourly), oldest first.
 * **Logs page**: choose the range (hour / day / week / month / everything / custom from-to), the level, a text search and
