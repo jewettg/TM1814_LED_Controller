@@ -56,15 +56,15 @@ def _send_email(cfg: Dict[str, Any], subject: str, body: str, kind: str = "") ->
             except smtplib.SMTPNotSupportedError:
                 pass                                  # a plain relay on the home network: carry on without it
         if cfg.get("smtp_user"):
-            # Try ONE login method. smtplib otherwise tries a second after a refusal and some servers (Gmail) hang up,
-            # which would hide the real reason ("Connection unexpectedly closed" instead of "wrong password").
-            features = getattr(smtp, "esmtp_features", {})
-            offered = (features.get("auth") or "").upper().split()
-            for method in ("PLAIN", "LOGIN"):
-                if method in offered:
-                    features["auth"] = method
-                    break
-            smtp.login(str(cfg["smtp_user"]), str(cfg.get("smtp_password") or ""))
+            # Try ONE login method. smtp.login() would try a second one after a refusal and some servers (Gmail) hang
+            # up on that, which hides the real reason ("Connection unexpectedly closed" instead of "wrong password").
+            smtp.ehlo_or_helo_if_needed()
+            offered = (smtp.esmtp_features.get("auth") or "").upper().split()
+            smtp.user, smtp.password = str(cfg["smtp_user"]), str(cfg.get("smtp_password") or "")
+            if "PLAIN" in offered or "LOGIN" not in offered:
+                smtp.auth("PLAIN", smtp.auth_plain, initial_response_ok=True)
+            else:
+                smtp.auth("LOGIN", smtp.auth_login)
         smtp.send_message(msg)
 
 
