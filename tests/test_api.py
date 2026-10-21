@@ -145,3 +145,13 @@ def test_effect_sections(client):
     assert client.post("/api/sections/delete", json={"name": "Autumn"}).json() == ["Halloween"]
     assert client.get(f"/api/effects/{emb}").json()["section"] == ""   # back to the built-in group, not deleted
     assert client.put(f"/api/effects/{emb}", json={"section": "x" * 61}).status_code == 422
+
+
+def test_seeding_keeps_a_users_effect_with_the_same_name(tmp_path):
+    from tm1814_led.db import Database
+    from tm1814_led.seed import seed_catalog
+    d = Database(str(tmp_path / "x.db"))
+    d.create_effect("Fall Colors", "solid", {"color": "#ff0000"})
+    seed_catalog(d)
+    names = [e["name"] for e in d.list_effects()]
+    assert "Fall Colors" in names and "Fall Colors (built-in)" in names

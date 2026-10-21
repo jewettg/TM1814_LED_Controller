@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from . import protocol as P
-from .db import Database
+from .db import Conflict, Database
 
 HALLOWEEN_FLASH = ["#ffffff", "#78a0ff"]
 
