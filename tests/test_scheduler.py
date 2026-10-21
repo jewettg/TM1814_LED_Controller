@@ -136,3 +136,18 @@ def test_describe_is_readable():
     assert "sunset -30 min" in S.describe(spec(start_time="sunset", start_offset=-30))
     assert "Oct" in S.describe(spec(repeat={"type": "yearly", "month": 10, "day": 31})) or \
         "October" in S.describe(spec(repeat={"type": "yearly", "month": 10, "day": 31}))
+
+
+def test_overridden_windows_are_marked():
+    import datetime as dt
+    from tm1814_led import scheduler as sch
+    t = lambda h, m=0: dt.datetime(2026, 10, 21, h, m, tzinfo=dt.timezone.utc)
+    w = [{"schedule_id": 1, "name": "Halloween", "priority": 100, "start": t(18), "end": t(23)},
+         {"schedule_id": 2, "name": "Default", "priority": 0, "start": t(18), "end": t(23)},
+         {"schedule_id": 3, "name": "Night", "priority": 500, "start": t(22), "end": t(23) + dt.timedelta(hours=8)},
+         {"schedule_id": 4, "name": "Other", "priority": 0, "start": t(7), "end": t(8)}]
+    sch.annotate_overrides(w)
+    by = {x["name"]: x for x in w}
+    assert by["Default"]["status"] == "overridden" and by["Default"]["overridden_by"][0]["name"] == "Halloween"
+    assert by["Halloween"]["status"] == "partial" and by["Halloween"]["overridden_by"][0]["name"] == "Night"
+    assert by["Night"]["status"] == "runs" and by["Other"]["status"] == "runs"

@@ -289,6 +289,38 @@ def pick_active(schedules: List[Dict[str, Any]], now: dt.datetime, place: Place)
     return found[0]
 
 
+def beats(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """True when window `a` takes precedence over window `b` (the same order pick_active uses)."""
+    ka = (-a["priority"], -a["start"].timestamp(), a["schedule_id"])
+    kb = (-b["priority"], -b["start"].timestamp(), b["schedule_id"])
+    return ka < kb
+
+
+def annotate_overrides(windows: List[Dict[str, Any]]) -> None:
+    """Add `status` ('runs', 'partial' or 'overridden') and `overridden_by` to each window, in place.
+
+    Each window needs schedule_id, name, priority, start and end (datetimes). A window is overridden for the stretches
+    where an overlapping window of a higher-priority schedule is running; `overridden_by` lists those stretches.
+    """
+    for w in windows:
+        cuts = []
+        for o in windows:
+            if o is w or o["schedule_id"] == w["schedule_id"] or not beats(o, w):
+                continue
+            a, b = max(w["start"], o["start"]), min(w["end"], o["end"])
+            if a < b:
+                cuts.append((a, b, o))
+        covered, last = 0.0, w["start"]
+        for a, b, _ in sorted(cuts, key=lambda c: c[0]):
+            a = max(a, last)
+            if b > a:
+                covered += (b - a).total_seconds(); last = b
+        total = (w["end"] - w["start"]).total_seconds()
+        w["status"] = "overridden" if cuts and covered >= total - 1 else ("partial" if cuts else "runs")
+        w["overridden_by"] = [{"schedule_id": o["schedule_id"], "name": o["name"], "priority": o["priority"],
+                               "start": a, "end": b} for a, b, o in sorted(cuts, key=lambda c: c[0])]
+
+
 def describe(spec: Dict[str, Any]) -> str:
     """Short human-readable summary of a validated spec."""
     rep = spec["repeat"]

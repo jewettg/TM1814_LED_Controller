@@ -138,6 +138,17 @@ export function fmtWindow(startIso, endIso) {
   const sameDay = fmt({ year: 'numeric', month: 'numeric', day: 'numeric' }, a) === fmt({ year: 'numeric', month: 'numeric', day: 'numeric' }, b);
   return fmtDateTime(startIso) + ' to ' + (sameDay ? fmtTime(endIso) : fmtDateTime(endIso));
 }
+/** One upcoming schedule window: struck through (with the reason) when a higher-priority schedule overrides it. */
+export function windowItem(u) {
+  const out = u.status === 'overridden', part = u.status === 'partial';
+  const why = (u.overridden_by || []).map((o) => (o.name + ' (priority ' + o.priority + ') ' + fmtTime(o.start) + ' to ' + fmtTime(o.end)));
+  return h('li', { class: 'win' + (out ? ' overridden' : '') },
+    h('span', { class: out ? 'struck' : '' }, h('strong', null, u.name), ' – ', u.runlist, h('br'), h('span', { class: 'small muted' }, fmtWindow(u.start, u.end))),
+    ' ', h('span', { class: 'badge info' }, 'Priority ' + u.priority),
+    out ? h('span', { class: 'badge warn', style: { marginLeft: '6px' } }, 'Overridden') : null,
+    part ? h('span', { class: 'badge warn', style: { marginLeft: '6px' } }, 'Partly overridden') : null,
+    why.length ? h('div', { class: 'small muted' }, (out ? 'Will not run: ' : 'Paused during: ') + why.join('; ')) : null);
+}
 export function fmtStamp(ts) {  // date and time with seconds, in the display time zone (for logs)
   return fmt({ month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }, new Date(ts * 1000));
 }

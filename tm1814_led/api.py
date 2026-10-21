@@ -291,7 +291,7 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
             except NotFound:
                 pass
         h = monitor.snapshot()
-        return {**st, "version": __version__, "active_schedule": active, "upcoming": manager.upcoming(count=3),
+        return {**st, "version": __version__, "active_schedule": active, "upcoming": manager.upcoming(count=6),
                 "health": {k: h[k] for k in ("state", "since", "last_ok", "failures", "unreachable_for_sec", "error")}
                           | {"diagnosis": h["diagnosis"].get("summary", ""), "host": h["host"]},
                 "needs_setup": not db.settings()["controller_host"] and not simulate,
@@ -489,6 +489,10 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     @app.get("/api/schedules")
     def list_schedules():
         return db.list_schedules()
+
+    @app.get("/api/schedules/upcoming")
+    def upcoming_schedules(count: int = 12):
+        return manager.upcoming(count=max(1, min(count, 50)))
 
     @app.post("/api/schedules", status_code=201)
     def create_schedule(body: ScheduleIn):

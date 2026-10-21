@@ -1,5 +1,5 @@
 import { api, getSettings, invalidate, getMeta } from '../api.js';
-import { h, render, act, toast, toastError, pageHead, fmtDuration, fmtDurationWords, fmtDateTime, fmtWindow, fmtClock, kindBadge, debounce } from '../ui.js';
+import { h, render, act, toast, toastError, pageHead, fmtDuration, fmtDurationWords, fmtDateTime, fmtWindow, windowItem, fmtClock, kindBadge, debounce } from '../ui.js';
 import { subscribe, setFast, refresh, getStatus } from '../status.js';
 import { StripView, FramePlayer } from '../strip.js';
 
@@ -177,8 +177,7 @@ export async function dashboard(ctx) {
     parts.push(st.active_schedule ? h('p', null, h('span', { class: 'badge ok' }, 'Active now'), ' ', st.active_schedule.name)
       : h('p', { class: 'muted' }, 'No schedule is active right now.'));
     if (st.upcoming && st.upcoming.length) {
-      parts.push(h('h3', null, 'Coming up'), h('ul', { class: 'occ-list' }, st.upcoming.map((u) =>
-        h('li', null, h('strong', null, u.name), ' – ', u.runlist, h('br'), h('span', { class: 'small muted' }, fmtWindow(u.start, u.end))))));
+      parts.push(h('h3', null, 'Coming up'), h('ul', { class: 'occ-list' }, st.upcoming.map(windowItem)));
     } else parts.push(h('p', { class: 'muted small' }, 'No upcoming windows. ', h('a', { href: '#/schedules' }, 'Manage schedules')));
     render(schedBox, parts);
 

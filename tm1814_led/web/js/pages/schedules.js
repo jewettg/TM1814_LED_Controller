@@ -1,5 +1,5 @@
 import { api, getMeta } from '../api.js';
-import { h, render, act, toast, pageHead, emptyState, loading, confirmDialog, promptDialog, fmtDateTime, fmtWindow, nextId, debounce, switchEl } from '../ui.js';
+import { h, render, act, toast, pageHead, emptyState, loading, confirmDialog, promptDialog, fmtDateTime, fmtWindow, windowItem, nextId, debounce, switchEl } from '../ui.js';
 import { go, dispatch } from '../router.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -12,6 +12,8 @@ export async function schedules(ctx) {
   render(ctx.app, loading());
   let rows = await api.get('/schedules');
   const box = h('div');
+  const nextBox = h('div');
+  let upcoming = [];
   const nextStart = {};
   async function loadNext() {
     await Promise.all(rows.map(async (s) => {
@@ -19,7 +21,13 @@ export async function schedules(ctx) {
       catch (e) { nextStart[s.id] = 'unknown'; }
     }));
   }
-  async function reload() { rows = await api.get('/schedules'); await loadNext(); draw(); }
+  async function loadUpcoming() {
+    try { upcoming = await api.get('/schedules/upcoming?count=12'); } catch (e) { upcoming = []; }
+    render(nextBox, upcoming.length ? h('section', { class: 'card' }, h('h2', null, 'Coming up'),
+      h('p', { class: 'muted small' }, 'Where windows overlap, the schedule with the higher priority runs and the other is crossed out.'),
+      h('ul', { class: 'occ-list' }, upcoming.map(windowItem))) : '');
+  }
+  async function reload() { rows = await api.get('/schedules'); await loadNext(); draw(); await loadUpcoming(); }
   function draw() {
     if (!rows.length) { render(box, emptyState('No schedules yet. A schedule starts a run list automatically at the times you choose.', h('a', { class: 'btn primary', href: '#/schedule/new' }, 'Create a schedule'))); return; }
     render(box, h('div', { class: 'card-grid' }, rows.map((s) => h('article', { class: 'card stack', 'aria-label': s.name },
@@ -45,8 +53,8 @@ export async function schedules(ctx) {
         }) }, 'Delete'))))));
   }
   render(ctx.app, pageHead('Schedules', h('a', { class: 'btn primary', href: '#/schedule/new' }, 'New schedule')),
-    h('p', { class: 'muted' }, 'Schedules turn the lights on by themselves. When two schedules overlap, the one with the higher priority wins.'), box);
-  draw(); await loadNext(); draw();
+    h('p', { class: 'muted' }, 'Schedules turn the lights on by themselves. When two schedules overlap, the one with the higher priority wins.'), nextBox, h('div', { style: { height: '12px' } }), box);
+  draw(); await loadNext(); draw(); await loadUpcoming();
 }
 
 // ------------------------------------------------------------------ editor
