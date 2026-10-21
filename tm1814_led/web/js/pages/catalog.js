@@ -125,12 +125,12 @@ export async function catalog(ctx) {
       ['Fixed', 'fixed', 'Still pictures: painted once and left that way. Nothing moves, and they stay lit even if this program stops.'],
       ['Animated', 'animated', 'These are drawn by this program at about 5 frames per second and need it running. Previews are shown below.']];
     const fam = (e) => (kindMap[e.kind] || {}).family || 'animated';
-    const groups = [...builtIn.map(([name, family, help]) => ({ name, help, custom: false, list: shown.filter((e) => !e.section && fam(e) === family) })),
-      ...sections.map((name) => ({ name, help: '', custom: true, list: shown.filter((e) => e.section === name) }))];
+    const groups = [...builtIn.map(([name, family, help]) => ({ name, help, custom: false, list: shown.filter((e) => e.section === name || (!e.section && fam(e) === family)) })),
+      ...custom().map((name) => ({ name, help: '', custom: true, list: shown.filter((e) => e.section === name) }))];
     const searching = !!(search || filter !== 'all');
     render(grid, groups.filter((g) => g.list.length || (g.custom && !searching)).map((g) => {
       const key = g.custom ? 'custom:' + g.name : g.name;
-      const total = effects.filter((e) => g.custom ? e.section === g.name : (!e.section && fam(e) === builtIn.find((b) => b[0] === g.name)[1])).length;
+      const total = effects.filter((e) => g.custom ? e.section === g.name : (e.section === g.name || (!e.section && fam(e) === builtIn.find((b) => b[0] === g.name)[1]))).length;
       const det = h('details', { class: 'effect-section' },
         h('summary', { class: 'section-title' }, g.name + ' (' + (searching ? g.list.length + ' of ' + total : g.list.length) + ')'),
         g.custom ? h('div', { class: 'row tight', style: { marginBottom: '8px' } },
@@ -144,6 +144,8 @@ export async function catalog(ctx) {
     }));
   }
 
+  const BUILT_IN = ['Controller-native', 'Fixed', 'Animated'];
+  const custom = () => sections.filter((n) => !BUILT_IN.includes(n));
   async function newSection() {
     const name = await promptDialog('New section', 'Section name', '', 'Create');
     if (!name) return null;
@@ -165,18 +167,19 @@ export async function catalog(ctx) {
   function moveEffect(e) {
     const NEW = '\u0000new';
     const sel = h('select', { 'aria-label': 'Section' },
-      h('option', { value: '' }, 'Default (by type)'),
-      ...sections.map((name) => h('option', { value: name }, name)),
+      ...BUILT_IN.map((name) => h('option', { value: name }, name)),
+      ...custom().map((name) => h('option', { value: name }, name)),
       h('option', { value: NEW }, 'New section\u2026'));
-    sel.value = e.section || '';
+    sel.value = e.section || ({ native: 'Controller-native', fixed: 'Fixed' }[(kindMap[e.kind] || {}).family] || 'Animated');
     const body = h('div', null, h('p', { class: 'muted' }, 'Choose the section for "' + e.name + '".'), sel,
       h('div', { class: 'row', style: { marginTop: '12px' } },
         h('button', { class: 'primary', type: 'button', onclick: act(async () => {
           let target = sel.value;
           if (target === NEW) { m.close(); target = await newSection(); if (!target) return; }
           else m.close();
-          await api.put('/effects/' + e.id, { section: target });
-          openSections.add(target ? 'custom:' + target : 'built-in');
+          const own = { native: 'Controller-native', fixed: 'Fixed' }[(kindMap[e.kind] || {}).family] || 'Animated';
+          await api.put('/effects/' + e.id, { section: target === own ? '' : target });
+          openSections.add(BUILT_IN.includes(target) ? target : 'custom:' + target);
           toast('Moved "' + e.name + '"', 'success'); reload();
         }) }, 'Move')));
     const m = modal('Move effect', body);
