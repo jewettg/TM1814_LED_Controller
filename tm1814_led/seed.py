@@ -89,7 +89,11 @@ def seed_catalog(db: Database) -> None:
     for e in _effects():
         if e["key"] in done:
             continue
-        created = db.create_effect(e["name"], e["kind"], e["params"], e["description"], seed_key=e["key"])
+        try:
+            created = db.create_effect(e["name"], e["kind"], e["params"], e["description"], seed_key=e["key"])
+        except Conflict:   # you already made an effect with this name: keep yours and add ours beside it
+            created = db.create_effect(e["name"] + " (built-in)", e["kind"], e["params"], e["description"],
+                                       seed_key=e["key"])
         ids[e["key"]] = created["id"]
         new_done.add(e["key"])
     for r in _runlists():
