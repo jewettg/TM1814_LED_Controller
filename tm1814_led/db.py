@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from . import effects as fx
 from . import scheduler as sch
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "controller_host": "",        # IP or host name of the controller ("" = not configured yet)
@@ -27,6 +27,14 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "latitude": None,             # for sunrise/sunset times
     "longitude": None,
     "log_retention_days": 60,     # logs older than this are deleted automatically (31 or more)
+    # ---- connection health and self-healing
+    "controller_mac": "",         # the controller's MAC address, learned automatically; it never changes, the IP can
+    "health_check_sec": 30,       # how often to check the controller is answering (while healthy)
+    "alert_after_minutes": 10,    # tell me if the controller has been unreachable this long
+    "alert_reminder_hours": 6,    # ... and remind me this often while it stays down
+    "alert_email": "",            # where to send alerts (comma separated); needs smtp_host
+    "smtp_host": "", "smtp_port": 25, "smtp_user": "", "smtp_password": "", "smtp_tls": True, "smtp_from": "",
+    "alert_webhook": "",          # an http(s) URL that receives alerts as a POST (works with ntfy, Home Assistant...)
     "seeded_keys": [],
 }
 
@@ -110,6 +118,16 @@ class Database:
                 PRAGMA user_version = 2;
                 """)
                 self.conn.commit()
+            if version < 3:
+                self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL, started REAL NOT NULL, ended REAL,
+                    summary TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '{}', resolution TEXT NOT NULL DEFAULT '');
+                CREATE INDEX IF NOT EXISTS incidents_started ON incidents(started);
+                PRAGMA user_version = 3;
+                """)
+                self.conn.commit()
 
     # ------------------------------------------------------------ helpers
     def _one(self, sql: str, args=()) -> Optional[sqlite3.Row]:
@@ -186,6 +204,25 @@ class Database:
         num("max_groups", 2, 30)
         num("brightness", 0, 100)
         num("log_retention_days", 31, 3650)
+        num("health_check_sec", 10, 600)
+        num("alert_after_minutes", 1, 1440)
+        num("alert_reminder_hours", 1, 168)
+        num("smtp_port", 1, 65535)
+        for key in ("alert_email", "smtp_host", "smtp_user", "smtp_from", "alert_webhook"):
+            if key in ch:
+                out[key] = str(ch[key] or "").strip()
+        if "smtp_password" in ch:
+            out["smtp_password"] = str(ch["smtp_password"] or "")
+        if "smtp_tls" in ch:
+            out["smtp_tls"] = bool(ch["smtp_tls"])
+        if "controller_mac" in ch:
+            from .netscan import normalize_mac
+            mac = normalize_mac(str(ch["controller_mac"] or ""))
+            if mac and len(mac) != 12:
+                raise ValueError("controller_mac must be 12 hex digits (for example 7C3E82292447)")
+            out["controller_mac"] = mac
+        if "alert_webhook" in out and out["alert_webhook"] and not out["alert_webhook"].lower().startswith(("http://", "https://")):
+            raise ValueError("alert_webhook must start with http:// or https://")
         if "controller_host" in ch:
             out["controller_host"] = str(ch["controller_host"] or "").strip()
         if "idle_action" in ch:
@@ -240,6 +277,61 @@ class Database:
         s = self.settings()
         return sch.Place(s["timezone"], s["latitude"], s["longitude"])
 
+    # ------------------------------------------------------------ incidents (outages and what was done about them)
+    def open_incident(self, kind: str, summary: str, detail: Optional[dict] = None, started: Optional[float] = None) -> int:
+        cur = self._write("INSERT INTO incidents(kind, started, summary, detail) VALUES(?,?,?,?)",
+                          (kind, started if started is not None else _now(), summary, json.dumps(detail or {})))
+        return cur.lastrowid
+
+    def update_incident(self, incident_id: int, summary: Optional[str] = None, detail: Optional[dict] = None) -> None:
+        with self.lock:
+            row = self._one("SELECT detail FROM incidents WHERE id = ?", (incident_id,))
+            if not row:
+                return
+            merged = {**json.loads(row["detail"]), **(detail or {})}
+            self.conn.execute("UPDATE incidents SET summary = COALESCE(?, summary), detail = ? WHERE id = ?",
+                              (summary, json.dumps(merged), incident_id))
+            self.conn.commit()
+
+    def close_incident(self, incident_id: int, resolution: str, ended: Optional[float] = None) -> None:
+        self._write("UPDATE incidents SET ended = ?, resolution = ? WHERE id = ? AND ended IS NULL",
+                    (ended if ended is not None else _now(), resolution, incident_id))
+
+    @staticmethod
+    def _incident_row(r: sqlite3.Row) -> Dict[str, Any]:
+        return {"id": r["id"], "kind": r["kind"], "started": r["started"], "ended": r["ended"], "summary": r["summary"],
+                "detail": json.loads(r["detail"]), "resolution": r["resolution"],
+                "duration_sec": (r["ended"] - r["started"]) if r["ended"] else None, "open": r["ended"] is None}
+
+    def list_incidents(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return [self._incident_row(r) for r in
+                self._all("SELECT * FROM incidents ORDER BY started DESC, id DESC LIMIT ?", (max(1, min(500, int(limit))),))]
+
+    def get_incident(self, incident_id: int) -> Optional[Dict[str, Any]]:
+        r = self._one("SELECT * FROM incidents WHERE id = ?", (incident_id,))
+        return self._incident_row(r) if r else None
+
+    def open_incident_of(self, kind: str) -> Optional[Dict[str, Any]]:
+        r = self._one("SELECT * FROM incidents WHERE kind = ? AND ended IS NULL ORDER BY started DESC LIMIT 1", (kind,))
+        return self._incident_row(r) if r else None
+
+    def prune_incidents(self, now: Optional[float] = None) -> int:
+        """Incidents follow the same retention period as logs."""
+        cutoff = (now if now is not None else _now()) - self.settings()["log_retention_days"] * 86400
+        with self.lock:
+            n = self.conn.execute("DELETE FROM incidents WHERE ended IS NOT NULL AND ended < ?", (cutoff,)).rowcount
+            self.conn.commit()
+        return n
+
+    # internal key/value state that is not a user setting (for example the alert de-duplication state)
+    def get_state(self, key: str, default: Any = None) -> Any:
+        row = self._one("SELECT value FROM settings WHERE key = ?", ("_state_" + key,))
+        return json.loads(row["value"]) if row else default
+
+    def set_state(self, key: str, value: Any) -> None:
+        self._write("INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    ("_state_" + key, json.dumps(value)))
+
     # ------------------------------------------------------------ logs
     def add_log(self, ts: float, level: str, logger: str, msg: str) -> None:
         with self.lock:
@@ -282,6 +374,7 @@ class Database:
         cutoff = (now if now is not None else _now()) - self.settings()["log_retention_days"] * 86400
         with self.lock:
             removed = self.conn.execute("DELETE FROM logs WHERE ts < ?", (cutoff,)).rowcount
+            self.conn.execute("DELETE FROM incidents WHERE ended IS NOT NULL AND ended < ?", (cutoff,))
             over = self.conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0] - MAX_LOG_ROWS
             if over > 0:
                 removed += self.conn.execute("DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY ts, id LIMIT ?)",

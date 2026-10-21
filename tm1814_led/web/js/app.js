@@ -1,6 +1,6 @@
 import { route, dispatch } from './router.js';
 import { api, getMeta } from './api.js';
-import { h, render, act } from './ui.js';
+import { h, render, act, fmtDurationWords } from './ui.js';
 import { subscribe, startPolling, refresh } from './status.js';
 import { dashboard } from './pages/dashboard.js';
 import { catalog } from './pages/catalog.js';
@@ -41,9 +41,20 @@ subscribe((st, err) => {
     return;
   }
   const c = st.controller, playing = st.state !== 'idle';
-  barDot.className = 'dot ' + (c.last_error ? 'bad' : (c.host ? 'ok' : 'warn'));
-  barConnWrap.title = c.last_error || (c.connected ? 'Controller connected' : 'The program connects to the controller when it has something to send');
-  barConn.textContent = c.simulated ? 'Simulated controller' : (c.host ? (c.last_error ? 'Cannot reach ' + c.host : (c.connected ? 'Connected to ' + c.host : 'Controller ' + c.host + ' (ready)')) : 'No controller set');
+  const hl = st.health || {};
+  if (!c.simulated && hl.state === 'offline') {
+    barDot.className = 'dot bad';
+    barConnWrap.title = hl.diagnosis || hl.error || '';
+    barConn.textContent = 'Controller not responding' + (hl.unreachable_for_sec ? ' for ' + fmtDurationWords(hl.unreachable_for_sec) : '') + ' - searching for it';
+  } else if (!c.simulated && hl.state === 'degraded') {
+    barDot.className = 'dot warn';
+    barConnWrap.title = hl.error || '';
+    barConn.textContent = 'Controller not answering - checking again';
+  } else {
+    barDot.className = 'dot ' + (c.last_error ? 'bad' : (c.host ? 'ok' : 'warn'));
+    barConnWrap.title = c.last_error || (c.connected ? 'Controller connected' : 'The program connects to the controller when it has something to send');
+    barConn.textContent = c.simulated ? 'Simulated controller' : (c.host ? (c.last_error ? 'Cannot reach ' + c.host : (c.connected ? 'Connected to ' + c.host : 'Controller ' + c.host + ' (ready)')) : 'No controller set');
+  }
   if (!playing) barNow.textContent = 'Nothing playing';
   else {
     const it = st.item && st.item.name ? st.item.name : '';

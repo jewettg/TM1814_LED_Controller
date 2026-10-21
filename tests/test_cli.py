@@ -253,3 +253,20 @@ def test_env_file_supplies_settings(tmp_path, monkeypatch):
     import os
     assert os.environ["TM1814_PASSWORD"] == "from-file" and os.environ["TM1814_PORT"] == "9999"
     monkeypatch.delenv("TM1814_PASSWORD"); monkeypatch.delenv("TM1814_PORT")
+
+
+def test_health_and_find_commands(service, capsys):
+    assert run("health", "--no-color") == 0
+    assert "unconfigured" in capsys.readouterr().out
+    service.app.state.db.update_settings({"controller_host": "simulated-host"})
+    assert run("find", "--no-color") == 0                                   # the simulated controller answers
+    assert "nothing needed fixing" in capsys.readouterr().out
+    assert run("health", "--no-color") == 0
+    out = capsys.readouterr().out
+    assert "online" in out and "Heartbeat" in out and "Alerts" in out and "none set up" in out
+    assert run("health", "--json") == 0 and json.loads(capsys.readouterr().out)["state"] == "online"
+
+
+def test_find_reports_when_the_controller_cannot_be_found(service, capsys):
+    assert run("find", "--no-color") == 1                                   # no controller address at all
+    assert "not found on the network" in capsys.readouterr().err

@@ -1,5 +1,5 @@
 import { api, getSettings, invalidate, getMeta } from '../api.js';
-import { h, render, act, toast, toastError, pageHead, fmtDuration, fmtWindow, fmtClock, kindBadge, debounce } from '../ui.js';
+import { h, render, act, toast, toastError, pageHead, fmtDuration, fmtDurationWords, fmtDateTime, fmtWindow, fmtClock, kindBadge, debounce } from '../ui.js';
 import { subscribe, setFast, refresh, getStatus } from '../status.js';
 import { StripView, FramePlayer } from '../strip.js';
 
@@ -81,13 +81,44 @@ export async function dashboard(ctx) {
   const ctlBox = h('dl', { class: 'kv' });
   const ctlCard = h('section', { class: 'card', 'aria-label': 'Controller' }, h('h2', null, 'Controller'), ctlBox);
 
+  // ---------- connection health: state, why, a "search now" button and the recent incidents
+  const healthBox = h('div', { class: 'stack' });
+  const ago = (ts) => (ts ? fmtDurationWords(Math.max(0, Date.now() / 1000 - ts)) + ' ago' : 'never');
+  async function loadHealth() {
+    let hl;
+    try { hl = await api.get('/health'); } catch (e) { render(healthBox, h('p', { class: 'muted small' }, 'Could not load: ' + e.message)); return; }
+    const colors = { online: 'ok', degraded: 'warn', offline: 'bad', unconfigured: 'warn', unknown: 'warn' };
+    const dl = [h('dt', null, 'Connection'), h('dd', null, h('span', { class: 'dot ' + (colors[hl.state] || 'warn') }), ' ' + hl.state + (hl.unreachable_for_sec != null ? ' (not answering for ' + fmtDurationWords(hl.unreachable_for_sec) + ')' : (hl.since ? ' (for ' + fmtDurationWords(Math.max(0, Date.now() / 1000 - hl.since)) + ')' : ''))),
+      h('dt', null, 'Last answered'), h('dd', null, ago(hl.last_ok)),
+      h('dt', null, 'Controller ID'), h('dd', null, hl.mac ? hl.mac : 'not learned yet (it is learned the first time the controller answers)')];
+    if (hl.failures) dl.push(h('dt', null, 'Not answering'), h('dd', null, hl.failures + ' check' + (hl.failures === 1 ? '' : 's') + ' in a row' + (hl.error ? ': ' + hl.error : '')));
+    if (hl.diagnosis && hl.diagnosis.summary) dl.push(h('dt', null, 'Likely reason'), h('dd', null, hl.diagnosis.summary));
+    dl.push(h('dt', null, 'Alerts'), h('dd', null, hl.alert_channels.length ? hl.alert_channels.join(' and ') : h('span', null, 'none set up. ', h('a', { href: '#/settings' }, 'Set them up'))));
+    const incidents = hl.incidents.length
+      ? h('div', { class: 'table-wrap' }, h('table', null, h('thead', null, h('tr', null, h('th', null, 'Started'), h('th', null, 'Lasted'), h('th', null, 'What happened'))),
+          h('tbody', null, hl.incidents.slice(0, 6).map((i) => h('tr', null,
+            h('td', { style: { whiteSpace: 'nowrap' } }, fmtDateTime(new Date(i.started * 1000).toISOString())),
+            h('td', null, i.open ? 'still going' : fmtDurationWords(i.duration_sec)),
+            h('td', null, i.resolution || i.summary))))))
+      : h('p', { class: 'muted small' }, 'No connection problems recorded.');
+    render(healthBox, h('dl', { class: 'kv' }, ...dl), h('div', { class: 'row' }, h('button', { type: 'button', onclick: act(async () => {
+      const r = await api.post('/health/recover');
+      toast(r.moved ? 'The controller had moved from ' + r.was + ' to ' + r.host + '. Following it now.' : (r.state === 'online' ? 'The controller is answering at ' + r.host + '.' : 'Not found yet. The program keeps looking.'), r.moved || r.state === 'online' ? 'success' : 'error', 6000);
+      await loadHealth(); await refresh();
+    }) }, 'Search for the controller now')), h('h3', { style: { margin: '8px 0 0' } }, 'Recent connection problems'), incidents);
+  }
+  const healthCard = h('section', { class: 'card', 'aria-label': 'Connection health' }, h('h2', null, 'Connection health'), healthBox);
+  const healthTimer = setInterval(() => { if (!document.hidden) loadHealth(); }, 10000);
+  ctx.onLeave(() => clearInterval(healthTimer));
+  loadHealth();
+
   // ---------- logs
   const logBox = h('div', { class: 'small', style: { fontFamily: 'var(--mono)' } });
   const logCard = h('section', { class: 'card', 'aria-label': 'Recent log' },
     h('div', { class: 'row' }, h('h2', { style: { margin: 0, flex: 1 } }, 'Recent activity'), h('a', { href: '#/logs' }, 'All logs')), logBox);
 
   render(app, pageHead('Dashboard'), setup,
-    h('div', { class: 'grid cols-2' }, h('div', { class: 'stack' }, nowCard, schedCard), h('div', { class: 'stack' }, controls, ctlCard)),
+    h('div', { class: 'grid cols-2' }, h('div', { class: 'stack' }, nowCard, schedCard), h('div', { class: 'stack' }, controls, ctlCard, healthCard)),
     h('div', { style: { marginTop: 'var(--space-4)' } }, logCard));
 
   // ---------- live strip: preview of whatever is playing (looped; it is an illustration, not a mirror)

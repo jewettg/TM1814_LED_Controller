@@ -38,6 +38,13 @@ class DBLogHandler(logging.Handler):
             pass
 
 
+def _human(seconds: float) -> str:
+    seconds = int(max(0, seconds))
+    if seconds >= 3600:
+        return f"{seconds // 3600} h {seconds % 3600 // 60} min"
+    return f"{seconds // 60} min {seconds % 60} s" if seconds >= 60 else f"{seconds} s"
+
+
 class Runner:
     def __init__(self, db: Database, controller: Controller):
         self.db = db
@@ -45,6 +52,7 @@ class Runner:
         self.lock = threading.RLock()
         self.wake = threading.Event()
         self.on_end: Optional[Callable[[dict, str], None]] = None  # (plan, reason) when a plan ends or is stopped
+        self.on_failure: Optional[Callable[[], None]] = None       # called when talking to the controller fails (wakes the monitor)
         self._plan: Optional[dict] = None
         self._gen = 0
         self._skip = False
@@ -56,6 +64,10 @@ class Runner:
         self._idle = {"action": "off", "color": "#ff5a00"}
         self._last_err = ""
         self.started_at = time.time()
+        self.beat = time.monotonic()            # stamped by the worker loop; the monitor watches it for stalls
+        self._fail_count = 0                    # consecutive failed controller actions (for calm logging)
+        self._fail_since = 0.0
+        self._fail_logged = 0.0
         self.item_status: Dict[str, Any] = {}
         self.achieved_fps = 0.0
         self.apply_settings()
@@ -64,6 +76,25 @@ class Runner:
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="runner", daemon=True)
         self._thread.start()
+
+    @property
+    def plan_active(self) -> bool:
+        return self._plan is not None
+
+    def request_reapply(self) -> None:
+        """Send the current effect to the controller again (after it came back, or moved)."""
+        self.ctrl.invalidate()
+        self._reapply = True
+        self.wake.set()
+
+    def restart_worker(self) -> None:
+        """Replace a stalled worker thread. The old one is told to stand down and, if it ever wakes, exits."""
+        with self.lock:
+            self._gen += 1
+        old = self._thread
+        self._thread = threading.Thread(target=self._loop, name="runner", daemon=True)
+        self._thread.start()
+        log.error("the worker thread was replaced (old one %s)", "had died" if old and not old.is_alive() else "was stuck")
 
     def shutdown(self) -> None:
         self._stop = True
@@ -177,7 +208,9 @@ class Runner:
         return not self._stop and gen == self._gen
 
     def _loop(self) -> None:
-        while not self._stop:
+        me = threading.current_thread()
+        while not self._stop and self._thread is me:
+            self.beat = time.monotonic()
             with self.lock:
                 plan, gen = self._plan, self._gen
             if plan is None:
@@ -222,19 +255,35 @@ class Runner:
         self._apply_idle()
 
     def _guard(self, what: str, fn: Callable[[], Any], gen: int) -> bool:
-        """Run a controller action; on failure log, back off briefly and report False."""
+        """Run a controller action; on failure log (calmly), back off briefly and report False.
+
+        The first failure is logged at once, then a reminder at most every 5 minutes ("still failing"), and a single
+        line when it works again, so a long outage does not bury the log in thousands of identical lines."""
         try:
             fn()
-            if self._last_err:
-                log.info("controller reachable again")
+            if self._fail_count:
+                log.info("controller reachable again after %d failed attempts over %s", self._fail_count,
+                         _human(time.time() - self._fail_since))
+            self._fail_count, self._fail_since = 0, 0.0
             self._last_err = ""
             return True
         except ControllerError as exc:
-            if str(exc) != self._last_err:
+            now = time.time()
+            if self._fail_count == 0:
+                self._fail_since, self._fail_logged = now, now
                 log.warning("%s: %s", what, exc)
+                if self.on_failure:
+                    self.on_failure()          # do not wait for the next scheduled check: start diagnosing now
+            elif now - self._fail_logged >= 300:
+                self._fail_logged = now
+                log.warning("still cannot reach the controller (%d attempts over %s): %s", self._fail_count + 1,
+                            _human(now - self._fail_since), exc)
+            self._fail_count += 1
             self._last_err = str(exc)
-            end = time.monotonic() + 3.0
+            wait = min(15.0, 3.0 + self._fail_count * 0.5)          # back off a little more after repeated failures
+            end = time.monotonic() + wait
             while time.monotonic() < end and self._alive(gen):
+                self.beat = time.monotonic()
                 time.sleep(0.1)
             return False
 
@@ -266,6 +315,7 @@ class Runner:
         period = 1.0 / max(1, self._fps)
         frames_done, fps_mark = 0, time.monotonic()
         while self._alive(gen):
+            self.beat = time.monotonic()
             if self._skip:
                 self._skip = False
                 return
@@ -379,6 +429,7 @@ class ScheduleManager:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.active_id: Optional[int] = None
+        self.beat = time.monotonic()
         runner.on_end = self._plan_ended
 
     def start(self) -> None:
@@ -454,6 +505,7 @@ class ScheduleManager:
     def _loop(self) -> None:
         last_prune = 0.0
         while not self._stop.is_set():
+            self.beat = time.monotonic()
             try:
                 self.evaluate()
                 if time.time() - last_prune > 3600:        # once an hour: drop logs older than the retention period

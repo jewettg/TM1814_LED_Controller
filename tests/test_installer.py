@@ -263,3 +263,65 @@ def test_install_links_the_command_and_uninstall_removes_only_its_own_link(tmp_p
     link.symlink_to("/bin/ls")                              # someone else's command of the same name is left alone
     I.Installer(args(dry_run=False, yes=True), os_name="linux", runner=lambda c, **k: Done()).uninstall()
     assert link.is_symlink()
+
+
+# ---- the independent watchdog job
+def test_watchdog_files_live_next_to_the_service_files(tmp_path):
+    mac = I.build_paths("macos", "user", home=tmp_path)
+    assert I.watchdog_files(mac)["plist"].name == "com.jewettg.tm1814-led-watchdog.plist"
+    linux = I.build_paths("linux", "system")
+    assert {k: v.name for k, v in I.watchdog_files(linux).items()} == {"service": "tm1814-led-watchdog.service", "timer": "tm1814-led-watchdog.timer"}
+    assert I.watchdog_files(I.build_paths("windows", "user", home=tmp_path, env={"LOCALAPPDATA": str(tmp_path)})) == {}
+
+
+def test_watchdog_plist_runs_every_three_minutes():
+    import plistlib
+    p = I.build_paths("macos", "user", home=Path("/Users/x"))
+    data = plistlib.loads(I.render_watchdog_plist(p).encode())
+    assert data["Label"] == I.WATCHDOG_LABEL and data["StartInterval"] == 180 and data["RunAtLoad"] is True
+    assert data["ProgramArguments"][1:] == ["watchdog", "--env-file", str(p.env_file)] and "KeepAlive" not in data
+
+
+def test_watchdog_units_run_as_root_only_for_a_system_install():
+    service, timer = I.render_watchdog_units(I.build_paths("linux", "system"))
+    assert "Type=oneshot" in service and "User=root" in service and "ExecStart=/opt/tm1814-led/venv/bin/tm1814-led watchdog" in service
+    assert "OnUnitActiveSec=3min" in timer and "OnBootSec=3min" in timer and "WantedBy=timers.target" in timer
+    user_service, _ = I.render_watchdog_units(I.build_paths("linux", "user", home=Path("/home/pi"), env={}))
+    assert "User=" not in user_service
+
+
+def test_watchdog_windows_task_and_cron_line(tmp_path):
+    win = I.build_paths("windows", "user", home=tmp_path, env={"LOCALAPPDATA": str(tmp_path)})
+    cmd = I.windows_watchdog_command(win, admin=False)
+    assert cmd[cmd.index("/SC") + 1] == "MINUTE" and cmd[cmd.index("/MO") + 1] == "3" and "/RU" not in cmd
+    assert "SYSTEM" in I.windows_watchdog_command(win, admin=True)
+    line = I.watchdog_cron_line(I.build_paths("linux", "user", home=Path("/home/pi"), env={}))
+    assert line.startswith("*/3 * * * * ") and " watchdog --env-file " in line and line.endswith("# tm1814-led-watchdog")
+
+
+def test_install_schedules_the_watchdog_and_uninstall_removes_it(tmp_path, monkeypatch):
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+    calls = []
+    monkeypatch.setattr(I, "has_systemd", lambda: True)
+    monkeypatch.setattr(I, "is_admin", lambda os_name: False)
+    for var, sub in (("HOME", ""), ("XDG_DATA_HOME", "data"), ("XDG_CONFIG_HOME", "cfg")):
+        monkeypatch.setenv(var, str(tmp_path / sub) if sub else str(tmp_path))
+    monkeypatch.setattr(I.Path, "home", classmethod(lambda cls: tmp_path))
+    runner = lambda c, **k: (calls.append(" ".join(map(str, c))), Done())[1]       # noqa: E731
+    inst = I.Installer(args(dry_run=False, generate_password=True), os_name="linux", runner=runner)
+    inst.install()
+    unit_dir = tmp_path / "cfg" / "systemd" / "user"
+    assert (unit_dir / "tm1814-led-watchdog.service").exists() and (unit_dir / "tm1814-led-watchdog.timer").exists()
+    assert any(c.endswith("enable --now tm1814-led-watchdog.timer") for c in calls)
+    inst.a.yes = True
+    inst.uninstall()
+    assert not (unit_dir / "tm1814-led-watchdog.timer").exists() and not (unit_dir / "tm1814-led-watchdog.service").exists()
+    assert any(c.endswith("disable --now tm1814-led-watchdog.timer") for c in calls)
+
+
+def test_dry_run_mentions_the_watchdog_on_every_os(capsys, monkeypatch):
+    monkeypatch.setattr(I, "has_systemd", lambda: True)
+    for os_name in ("linux", "macos", "windows"):
+        I.Installer(args(password="x"), os_name=os_name).install()
+        assert "watchdog" in capsys.readouterr().out.lower()

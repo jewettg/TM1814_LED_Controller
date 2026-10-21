@@ -141,7 +141,7 @@ For sunrise/sunset to be exact, enter your **latitude, longitude and time zone**
 
 ### Settings
 
-The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); your time zone and location; **how long to keep logs**; and **Change password**.
+The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); your time zone and location; **how long to keep logs**; **Self-healing and alerts**; and **Change password**.
 
 **Latitude and longitude.** *Use my location* asks your browser for it, but browsers only do that on secure pages: `https://...` or `http://localhost:8080` on the computer running the program. If you opened the page by its network address (for example `http://192.168.1.20:8080`) the browser refuses without even asking, and the page says so. Either open `http://localhost:8080` on that computer and try again, or just type the numbers (search for your town's latitude and longitude; a few miles either way changes sunset by well under a minute).
 
@@ -225,7 +225,7 @@ Always run it once with **`--dry-run`** first to see every file it will write an
 | **macOS** | A LaunchAgent: starts when you log in and restarts if it stops. Logs are in `~/Library/Logs/tm1814-led/`. |
 | **Windows** | A Scheduled Task that starts when you log in (or at startup if you run the installer as administrator). You may need to allow it through Windows Firewall to reach it from other devices. |
 
-Check on it: `python3 -m tm1814_led --service-status`.
+Check on it: `python3 -m tm1814_led --service-status`. The install also schedules the **watchdog** (see *When the controller goes offline*): a second launchd job on macOS, a systemd timer on Linux, a scheduled task on Windows, or a cron line.
 Remove it: `python3 -m tm1814_led --uninstall` (keeps your data) or add `--purge` to delete everything.
 
 Your catalog, run lists, schedules and settings live in a single database file; back it up by copying it (see the data folder printed during install).
@@ -239,6 +239,40 @@ python3 -m tm1814_led --install       # re-running it upgrades in place
 ```
 
 Your data is kept.
+
+---
+
+## When the controller goes offline: self-healing and alerts
+
+Controllers are Wi-Fi devices, and sometimes they drop off the network or **come back with a different IP address** (this is what happens when a router hands out addresses by DHCP and restarts). The program deals with that by itself:
+
+* **It notices.** It checks that the controller is answering (every 30 seconds, and straight away when a command fails). A running effect already proves the controller is there, so a healthy system is hardly asked anything.
+* **It follows the controller if its address changed.** The controller has a permanent **ID (its MAC address)**, learned automatically the first time it answers. When the controller stops answering, the program searches your network for that ID and, if it turns up at a new address, switches to it. No action from you; the change is recorded and (if you set up alerts) you are told. The search only uses your home network, never a VPN.
+* **It keeps trying and recovers on its own** when the controller is simply off or has lost Wi-Fi, and **sends the current effect again** once it is back (the controller may have restarted and forgotten it). Schedules carry on as normal.
+* **It explains what is wrong.** After three missed checks it records a *connection problem* and works out the likely reason in plain English, for example "this computer cannot reach its own router" versus "the router is reachable but nothing answers at the controller's address".
+* **It restarts itself if it gets stuck.** If one of the program's own workers stops responding it is replaced, and a separate **watchdog job** (installed by `--install`, run every three minutes by the system scheduler, not by the program) restarts the whole service if it stops answering at all.
+
+**Where to see it:** the red/yellow line at the top of every page, the **Connection health** card on the Dashboard (state, last time it answered, the controller's ID, the likely reason, the list of recent problems, and a **Search for the controller now** button), the Logs page, and `tm1814-led health` / `tm1814-led find` in a terminal.
+
+**Being told.** Set up an alert in **Settings → Self-healing and alerts** (nothing is sent until you do). You can use either or both:
+
+| Channel | How |
+| --- | --- |
+| **Phone notification (easiest)** | Install the free **ntfy** app, pick a hard-to-guess topic name such as `led-lights-7f3k9`, subscribe to it in the app, and put `https://ntfy.sh/led-lights-7f3k9` in *Webhook address*. |
+| **Email** | Enter the address to send to, your mail server (for example `smtp.gmail.com`, port 587, with an *app password* for Gmail), and a user name and password if the server needs them. |
+
+Press **Send a test alert** to check it. After that you get: **one** alert when the controller has been unreachable for 10 minutes (adjustable), a **reminder** every 6 hours while it stays down, a **"Recovered"** message when it is back, and an immediate **"Controller moved to ..."** note if it changed address and was followed. The independent watchdog alerts through the same channels if the *program* stops responding.
+
+**A tip that prevents most of this:** in your router, give the controller a **fixed address** (a "DHCP reservation" or "static lease" for its MAC address, shown on the Dashboard). Then its address never changes.
+
+| What happens | What the program does |
+| --- | --- |
+| The router hands the controller a new IP | Finds it by its ID within about a minute, follows it, records it, tells you |
+| The controller or its power supply is off | Keeps checking every 10 seconds, records a problem, alerts after 10 minutes, resumes when it returns |
+| The Wi-Fi or this computer's network is down | Says so in the diagnosis; resumes when the network is back |
+| The controller restarts and forgets its picture | Notices it came back and sends the current effect again |
+| The program hangs | The watchdog restarts the service within a few minutes and alerts you |
+| This whole computer is off or asleep | Nothing can run (use an always-on computer such as a Raspberry Pi) |
 
 ---
 
@@ -278,6 +312,7 @@ The service restarts at boot and the schedules pick up again. A controller that 
 
 | Problem | Try this |
 | --- | --- |
+| The controller's address keeps changing | Give it a fixed address (DHCP reservation) in your router. Meanwhile the program follows it automatically (see *When the controller goes offline*). |
 | *Find controllers* finds nothing | Be sure the computer and controller are on the same network (not a "guest" Wi-Fi). Some routers block broadcast traffic — enter the controller's IP address by hand (find it in your router, or in the vendor app under the device's *More device information*). |
 | "controller: connect failed" | Wrong address, or the controller is off or busy. Try again in 10 seconds. Only one program should be talking to it. |
 | Lights do something odd after changing settings | Press **Stop**, wait a few seconds and play again. |
@@ -301,6 +336,8 @@ tm1814-led status               # what's playing, controller state, next schedul
 | --- | --- |
 | **Talk to the service** | |
 | `status` | what is playing, controller connection, active and upcoming schedules |
+| `health` | the connection to the controller: state, when it last answered, its ID, the likely reason for any problem, recent incidents |
+| `find` | search the network for the controller right now and follow it if its address changed |
 | `effects [text]` | list the catalog (`--native` / `--fixed` / `--animated` to filter) |
 | `runlists`, `schedules` | list run lists, and schedules with their next start |
 | `play "name"` | play an effect or run list by name, part of a name, or id (`--effect` / `--runlist` to be specific, `--for 120` to stop an effect after two minutes) |
@@ -315,6 +352,7 @@ tm1814-led status               # what's playing, controller state, next schedul
 | **Session and service** | |
 | `login`, `logout`, `password` | sign in now / forget this terminal's sign-in / change the password |
 | `install`, `uninstall`, `service` | the same as `--install`, `--uninstall`, `--service-status` |
+| `watchdog` | one independent health check that restarts the service if it is stuck (the installed scheduler job runs this every 3 minutes; you do not need to) |
 | `serve` | run the web page in the foreground (what the service does for you) |
 
 Add `--json` to any listing for machine-readable output and `--no-color` for plain text. For scripts that cannot type a password, set the `TM1814_PASSWORD` environment variable. The direct commands (`on`, `off`, `color`, `test`...) talk straight to the controller, so run `tm1814-led stop` first if the service is playing something.

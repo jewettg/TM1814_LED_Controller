@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+* **Self-healing connection to the controller.** A connection monitor checks the controller, learns its MAC address,
+  and **follows it when its IP address changes** (found by a network search that skips VPNs); it records each outage
+  as an incident with a plain-English diagnosis, re-sends the current effect after recovery, and sends de-duplicated
+  alerts (email and/or webhook such as ntfy): one after N minutes, reminders, "recovered", and "moved".
+* **Independent watchdog** run by the system scheduler (launchd / systemd timer / Windows task / cron): restarts the
+  service if it stops answering or a worker is stuck, and alerts. The program also replaces stalled worker threads.
+* Dashboard "Connection health" card, status-bar outage message, Settings "Self-healing and alerts", Logs calmer
+  during outages (no more hundreds of identical warnings), `tm1814-led health` / `find` / `watchdog`,
+  `GET /api/health`, `/api/health/live`, `POST /api/health/recover`.
+
 * **Change password** in Settings and with `tm1814-led password`: needs the current password, stores a salted
   PBKDF2 hash in the database, signs every other browser and terminal out, and works the same on a Mac or a
   Raspberry Pi. Re-running the installer with a new password still takes precedence.

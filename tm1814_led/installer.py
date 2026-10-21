@@ -26,7 +26,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import __version__
 from .config import DEFAULT_PORT
@@ -34,6 +34,9 @@ from .config import DEFAULT_PORT
 SERVICE_NAME = "tm1814-led"
 LAUNCHD_LABEL = "com.jewettg.tm1814-led"
 WINDOWS_TASK = "TM1814 LED Controller"
+WATCHDOG_LABEL = "com.jewettg.tm1814-led-watchdog"
+WINDOWS_WATCHDOG_TASK = "TM1814 LED Watchdog"
+WATCHDOG_MINUTES = 3
 SYSTEM_USER = "tm1814"
 
 
@@ -167,6 +170,63 @@ def windows_task_command(paths: Paths, admin: bool) -> List[str]:
     cmd = ["schtasks", "/Create", "/TN", WINDOWS_TASK, "/TR", run, "/F"]
     cmd += ["/SC", "ONSTART", "/RU", "SYSTEM"] if admin else ["/SC", "ONLOGON", "/RL", "LIMITED"]
     return cmd
+
+
+def watchdog_files(paths: Paths) -> Dict[str, Path]:
+    """Where the watchdog's own service files live (next to the main service's)."""
+    base = paths.service_file
+    if base is None:
+        return {}
+    if paths.os_name == "macos":
+        return {"plist": base.with_name(f"{WATCHDOG_LABEL}.plist")}
+    return {"service": base.with_name(f"{SERVICE_NAME}-watchdog.service"), "timer": base.with_name(f"{SERVICE_NAME}-watchdog.timer")}
+
+
+def render_watchdog_plist(paths: Paths) -> str:
+    log_dir = paths.log_dir or Path("/tmp")
+    return textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key><string>{WATCHDOG_LABEL}</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>{paths.exe}</string>
+                <string>watchdog</string>
+                <string>--env-file</string>
+                <string>{paths.env_file}</string>
+            </array>
+            <key>StartInterval</key><integer>{WATCHDOG_MINUTES * 60}</integer>
+            <key>RunAtLoad</key><true/>
+            <key>StandardOutPath</key><string>{log_dir}/watchdog.log</string>
+            <key>StandardErrorPath</key><string>{log_dir}/watchdog.err.log</string>
+        </dict>
+        </plist>
+        """)
+
+
+def render_watchdog_units(paths: Paths) -> Tuple[str, str]:
+    """(service, timer) systemd units. In a system install the check runs as root so it may restart the service."""
+    system = paths.mode == "system"
+    service = "\n".join(["[Unit]", "Description=TM1814 LED controller watchdog (independent health check)", "",
+                         "[Service]", "Type=oneshot"] + (["User=root"] if system else []) +
+                        [f"EnvironmentFile={paths.env_file}", f"ExecStart={paths.exe} watchdog", ""])
+    timer = "\n".join(["[Unit]", "Description=Run the TM1814 LED controller watchdog every few minutes", "",
+                       "[Timer]", "OnBootSec=3min", f"OnUnitActiveSec={WATCHDOG_MINUTES}min", "AccuracySec=30s", "",
+                       "[Install]", "WantedBy=timers.target", ""])
+    return service, timer
+
+
+def windows_watchdog_command(paths: Paths, admin: bool) -> List[str]:
+    run = f'"{paths.python}" -m tm1814_led watchdog --env-file "{paths.env_file}"'
+    cmd = ["schtasks", "/Create", "/TN", WINDOWS_WATCHDOG_TASK, "/TR", run, "/SC", "MINUTE", "/MO", str(WATCHDOG_MINUTES), "/F"]
+    return cmd + (["/RU", "SYSTEM"] if admin else [])
+
+
+def watchdog_cron_line(paths: Paths) -> str:
+    return (f"*/{WATCHDOG_MINUTES} * * * * {shlex.quote(str(paths.exe))} watchdog --env-file {shlex.quote(str(paths.env_file))} "
+            f">> {shlex.quote(str(paths.data_dir))}/watchdog.log 2>&1  # {SERVICE_NAME}-watchdog")
 
 
 def cron_line(paths: Paths) -> str:
@@ -422,6 +482,12 @@ class Installer:
         ctl = ["systemctl"] if p.mode == "system" else ["systemctl", "--user"]
         self.run(ctl + ["daemon-reload"])
         self.run(ctl + ["enable", "--now", f"{SERVICE_NAME}.service"])
+        wd = watchdog_files(p)
+        unit, timer = render_watchdog_units(p)
+        self.write(wd["service"], unit)
+        self.write(wd["timer"], timer)
+        self.run(ctl + ["daemon-reload"])
+        self.run(ctl + ["enable", "--now", f"{SERVICE_NAME}-watchdog.timer"])
         if p.mode == "user":
             user = getpass.getuser()
             if self.run(["loginctl", "enable-linger", user], check=False) != 0:
@@ -435,9 +501,9 @@ class Installer:
             current = proc.stdout if proc.returncode == 0 else ""
         lines = [l for l in current.splitlines() if f"# {SERVICE_NAME}" not in l]
         if add:
-            lines.append(cron_line(self.paths))
+            lines += [cron_line(self.paths), watchdog_cron_line(self.paths)]
         if self.dry:
-            self.say(f"  [dry run] crontab += {cron_line(self.paths)}")
+            self.say(f"  [dry run] crontab += {cron_line(self.paths)}\n  [dry run] crontab += {watchdog_cron_line(self.paths)}")
             return
         proc = self.runner(["crontab", "-"], input="\n".join(lines) + "\n", text=True, capture_output=True)
         if proc.returncode != 0:
@@ -461,10 +527,20 @@ class Installer:
             raise InstallError("launchctl could not load the service; try `launchctl bootout "
                                f"{domain}/{LAUNCHD_LABEL}` and run the installer again")
         self.run(["launchctl", "kickstart", "-k", f"{domain}/{LAUNCHD_LABEL}"], check=False)
+        wd = watchdog_files(p)["plist"]                      # the independent watchdog: a second launchd job
+        self.write(wd, render_watchdog_plist(p))
+        self.run(["launchctl", "bootout", f"{domain}/{WATCHDOG_LABEL}"], check=False, quiet=True)
+        for attempt in range(6):
+            if self.run(["launchctl", "bootstrap", domain, str(wd)], check=False) == 0:
+                break
+            time.sleep(1.0)
+        else:
+            self.say("  note: the watchdog job could not be loaded; the service itself is running")
 
     def _install_windows(self) -> None:
         self.run(windows_task_command(self.paths, self.admin))
         self.run(["schtasks", "/Run", "/TN", WINDOWS_TASK], check=False)
+        self.run(windows_watchdog_command(self.paths, self.admin))
 
     def _finish(self, password: Optional[str]) -> None:
         self.say("")
@@ -512,18 +588,25 @@ class Installer:
         if self.os == "linux":
             ctl = ["systemctl"] if p.mode == "system" else ["systemctl", "--user"]
             if has_systemd():
+                self.run(ctl + ["disable", "--now", f"{SERVICE_NAME}-watchdog.timer"], check=False)
                 self.run(ctl + ["disable", "--now", f"{SERVICE_NAME}.service"], check=False)
+                for f in watchdog_files(p).values():
+                    self._remove(f)
                 self._remove(p.service_file)
                 self.run(ctl + ["daemon-reload"], check=False)
             else:
                 self._cron(add=False)
         elif self.os == "macos":
             uid = os.getuid() if hasattr(os, "getuid") else 501
+            self.run(["launchctl", "bootout", f"gui/{uid}/{WATCHDOG_LABEL}"], check=False)
             self.run(["launchctl", "bootout", f"gui/{uid}/{LAUNCHD_LABEL}"], check=False)
+            for f in watchdog_files(p).values():
+                self._remove(f)
             self._remove(p.service_file)
         else:
-            self.run(["schtasks", "/End", "/TN", WINDOWS_TASK], check=False, quiet=True)
-            self.run(["schtasks", "/Delete", "/TN", WINDOWS_TASK, "/F"], check=False)
+            for task in (WINDOWS_WATCHDOG_TASK, WINDOWS_TASK):
+                self.run(["schtasks", "/End", "/TN", task], check=False, quiet=True)
+                self.run(["schtasks", "/Delete", "/TN", task, "/F"], check=False)
         self._remove(p.env_file)
         link = self.cli_link_path()
         if link is not None and (link.is_symlink() and os.readlink(link) == str(p.exe) or self.dry):

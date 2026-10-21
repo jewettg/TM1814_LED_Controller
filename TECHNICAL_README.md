@@ -392,7 +392,7 @@ Data model (the `data` parameter):
 
 ## 9. Data model
 
-SQLite, schema version 2 (`PRAGMA user_version`; older files are upgraded automatically on start), WAL mode, foreign keys on. File: `<data dir>/tm1814.db`.
+SQLite, schema version 3 (`PRAGMA user_version`; older files are upgraded automatically on start), WAL mode, foreign keys on. File: `<data dir>/tm1814.db`.
 
 ```
 settings(key PK, value JSON)
@@ -401,6 +401,7 @@ runlists(id, name UNIQUE NOCASE, loop, shuffle, notes, created, updated)
 runlist_items(id, runlist_id → runlists CASCADE, position, effect_id → effects RESTRICT, duration_sec)
 schedules(id, name UNIQUE NOCASE, runlist_id → runlists RESTRICT, enabled, priority, spec JSON, created, updated)
 logs(id, ts REAL, lvl INTEGER, level TEXT, logger TEXT, msg TEXT)      -- index on ts; see "Logs" below
+incidents(id, kind, started REAL, ended REAL NULL, summary, detail JSON, resolution)   -- connection outages; pruned with the logs
 ```
 
 * Names are unique case-insensitively within a table (HTTP 409 on conflict).
@@ -505,6 +506,44 @@ Status payload (`GET /api/status`) includes `state` (`idle`/`running`/`paused`),
 
 ---
 
+### Connection health and self-healing
+
+Implemented in `health.py` (monitor), `netscan.py` (finding the controller), `alerts.py` (email and webhook) and `watchdog.py` (independent layer 2). It mirrors the two-layer pattern of the scriptbox platform: an in-process sweep plus a separate watchdog started by the operating system, both with de-duplicated alerts.
+
+**Layer 1: `ConnectionMonitor`** (one thread, started with the service; `tick()` is one check and is what the tests drive).
+
+| Step | Behavior |
+| --- | --- |
+| Probe | `query_state()` every `health_check_sec` (default 30; every 10 s while something is wrong; `nudge()` makes it check immediately). If an effect is playing and the controller client has had a successful send within the interval and no error, that counts as proof of life and nothing is sent. When idle, the probe connection is closed afterwards (the controller drops idle connections anyway). |
+| States | `unknown` → `online` / `unconfigured`; a failed check → `degraded`; **3 consecutive failures → `offline`**. |
+| Learn the ID | The first time it is online with no `controller_mac` saved, a unicast discovery probe to the controller's address returns its MAC (fallback: the ARP table). Retried every 10 minutes while unknown. Never done for a simulated controller. Editing `controller_host` in Settings clears the saved MAC (another device) unless one is supplied (the "Find controllers" list supplies it). |
+| Search | On a failed check, at most **once a minute**: `netscan.find_by_mac(mac, near=host)`. If it is found at a **different IP** the monitor `_adopt`s it: saves the new `controller_host`, calls `Runner.apply_settings()` and `Controller.set_address()`, opens/updates the incident with `moved_from`/`moved_to`, sends a "Controller moved" alert at once, and re-probes. Without a saved MAC it logs that it cannot follow the controller. |
+| Incident | When it reaches `offline` an `incidents` row (`kind = controller_offline`) is opened with `started` = the time of the **first** failed check, then a diagnosis (`netscan.diagnose`) is stored (refreshed every 5 minutes). One open incident at a time; it survives restarts of the program. |
+| Recovery | The first successful check after failures closes the incident (`resolution`: "reconnected on its own" or "found at its new address X (was Y)"), logs the duration, and calls `Runner.request_reapply()` so the current effect is sent again (the controller may have rebooted). |
+| Alerts | See below. |
+| Worker supervision | Each check also inspects the program's own threads. A runner thread that has died, or has had work (a plan) but has not stamped its heartbeat for 120 s, is replaced with `Runner.restart_worker()`; a dead schedule thread is restarted. **Three replacements within 15 minutes → `os._exit(70)`**, so launchd/systemd restart the whole process. |
+
+**Finding the controller (`netscan.py`).** The controller answers a UDP datagram `HF-A11ASSISTHREAD` on port 48899 with `ip,MAC,model,token`. `discover()` sends it by broadcast on every interface **and** directly to every host of the interface networks (some routers and access points drop broadcasts), batched, and collects replies for up to the timeout (about 1.5 s for a /24 on this hardware). The MAC is compared after normalization (`7C:3E:..`, `7C-3E-..` and `7C3E...` are the same). Safety rules: **VPN tunnels and virtual adapters are skipped** by interface name (`utun*`, `tun*`, `wg*`, `ppp*`, `docker*`, `vboxnet*`, names containing "vpn", "tap-", "virtual", ...), only private networks between /22 and /30 are swept (at most 1024 hosts), and with `near=<last known IP>` only the network containing that address is swept. Interface and routing details are parsed from `ifconfig` (macOS/BSD), `ip -o -4 addr` / `ip route` (Linux) and `ipconfig` / `route print` (Windows); every helper is best effort and never raises.
+
+**Diagnosis (`netscan.diagnose`).** Pings the default gateway, pings the controller's address and reads the ARP table, then reports one of: "this computer cannot reach its own router" (the problem is this computer's network); "another device now has the address X" (the ARP MAC differs: the controller has moved); "the address answers a ping but refuses the control connection" (it may be restarting); or "the router is reachable but nothing answers at the controller's address: off, lost Wi-Fi, or moved".
+
+**Alerts (`alerts.py`).** Channels: email (`alert_email` + `smtp_host`, optional `smtp_user`/`smtp_password`, STARTTLS or SSL on 465) and a webhook (`alert_webhook`: a plain-text POST with the subject in a `Title` header, which ntfy.sh and similar services accept). Nothing is sent until a channel is configured, and a failing channel is logged, never raised. Policy (state in the `_state_alert` row, so it survives restarts): **one alert when the incident has lasted `alert_after_minutes` (default 10), a `[reminder]` every `alert_reminder_hours` (default 6) while it lasts, a "Recovered" message when it ends (only if a down alert was sent), and an immediate "Controller moved to X" notice when an address change is followed**. The SMTP password is stored in the database and is write-only through the API (`GET /api/settings` returns `smtp_password_set` instead). `POST /api/health/test-alert` sends a test message.
+
+**Calm logging.** The runner logs the first failed command of a streak, then at most one "still cannot reach the controller (N attempts over T)" line every 5 minutes, and one line when it works again (previously a three-hour outage wrote about 800 identical warnings). Backoff between failed attempts grows from 3 s to 15 s.
+
+**Layer 2: the independent watchdog (`watchdog.py`, `tm1814-led watchdog`).** A separate short-lived process run every 3 minutes by the **operating system's own scheduler**, so it works when the program has died or hung: a launchd `StartInterval` job (macOS), a systemd timer + oneshot service (Linux; runs as root in a system install so it may restart the service), a Windows scheduled task (`/SC MINUTE /MO 3`) or a cron line. It requests the program's public `GET /api/health/live` (secret-free: `{ok, version, heartbeat, uptime_sec}`; `ok` is false if the worker, schedule or monitor thread has been silent for 120 s). On a bad check it counts; at **2 consecutive bad checks** it restarts the service (`launchctl kickstart -k`, `systemctl [--user] restart`, or `schtasks /End` + `/Run`), at most **3 restarts per hour**, and alerts (one alert, reminders every 6 hours, a recovery message). Its state is a small JSON file in the data directory and it reads the alert settings straight from the database **read-only**, so it can alert while the program is down. Not covered: the whole computer being off (the watchdog dies with it); for that use an external dead-man's-switch service.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `controller_mac` | learned | the controller's MAC address (12 hex digits) |
+| `health_check_sec` | 30 (10–600) | check interval while healthy |
+| `alert_after_minutes` | 10 (1–1440) | down this long before the first alert |
+| `alert_reminder_hours` | 6 (1–168) | reminder interval |
+| `alert_email`, `smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `smtp_tls`, `smtp_from` | empty / 25 | email channel |
+| `alert_webhook` | empty | webhook channel (http or https) |
+
+---
+
 ## 12. REST API
 
 JSON over HTTP, prefix `/api`. Errors are `{"detail": "message"}`:
@@ -536,6 +575,11 @@ Interactive documentation is served by FastAPI at `/docs` (and `/openapi.json`) 
 
 | Route | Description |
 | --- | --- |
+| `GET /api/health` | `{state, since, last_ok, failures, unreachable_for_sec, error, diagnosis, host, mac, incident, alert_channels, heartbeat, incidents[]}` |
+| `GET /api/health/live` | **public**, secret-free liveness for the watchdog: `{ok, version, heartbeat, uptime_sec}` |
+| `POST /api/health/recover` | search for the controller now and follow it: `{moved, host, was, state, mac_known}` |
+| `POST /api/health/test-alert` | send a test alert through the configured channels |
+| `GET /api/incidents?limit=50` | recorded connection problems, newest first |
 | `GET /api/settings`, `PUT /api/settings` | read / change settings (partial body; validated; applied live) |
 | `GET /api/controller/state` | query the controller: `{reachable, state{…}, error}` |
 | `POST /api/controller/discover` | UDP discovery: `[{ip, mac, model, token}]` (takes ~2 s) |
@@ -594,7 +638,7 @@ curl -s -X POST localhost:8080/api/control/play -H 'Content-Type: application/js
 * **The web page is the only way into the program, and it always requires a password.** `serve` refuses to start without one (except `--simulate`); the installer always sets one. A single shared password; no accounts.
 * **Sign-in:** `POST /api/login {"password"}` returns an `HttpOnly`, `SameSite=Lax` cookie `tm1814_session` holding `v1.<expiry>.<HMAC-SHA256>`. The key is derived from a random 256-bit secret kept in the database plus a hash of the password, so sessions survive restarts and **changing the password signs everyone out**. Sessions last 30 days. Nothing about sessions is stored server-side.
 * **Changing the password** (`POST /api/password {current, new}`, Settings page, or `tm1814-led password`): requires a signed-in session **and** the current password (wrong attempts count toward the same throttle), a new password of 8–200 characters different from the current one. The new password is stored in the database (settings key `_password`) as a **salted PBKDF2-HMAC-SHA256 hash** (200,000 iterations, random 16-byte salt), never in clear text, and it overrides the settings-file password while present. The signing key is derived from the active password, so every other session and terminal is signed out at once; the caller gets a fresh cookie and stays signed in. The record also stores a fingerprint of the settings-file password: if the installer later writes a *different* password to the settings file, the stale override is discarded at startup and the installer's password wins again (re-running the installer without a password option keeps the changed one). The override is not an editable setting and is not returned by `/api/settings`.
-* **Gatekeeping:** a middleware lets only `/login`, `/api/login`, `/api/auth` and `/style.css` through without a valid cookie. Unauthenticated `/api/*` requests get `401 {"detail": "login required"}` **without** a `WWW-Authenticate` header (so browsers never show a native prompt); other paths get `302 /login`. **HTTP Basic is not accepted.** `/docs` and `/openapi.json` are protected too.
+* **Gatekeeping:** a middleware lets only `/login`, `/api/login`, `/api/auth`, `/api/health/live` and `/style.css` through without a valid cookie. Unauthenticated `/api/*` requests get `401 {"detail": "login required"}` **without** a `WWW-Authenticate` header (so browsers never show a native prompt); other paths get `302 /login`. **HTTP Basic is not accepted.** `/docs` and `/openapi.json` are protected too.
 * **Caching:** every response carries `Cache-Control: no-store` (API) or `no-cache` (pages), so after Log out a browser can never show a cached page before being redirected.
 * **Brute force:** 8 wrong passwords per client address in 5 minutes returns `429` for the rest of the window; every wrong guess also costs 0.6 s. Password comparison is constant-time.
 * There is **no TLS**: the password and cookie cross the LAN in clear text. Put the app behind a reverse proxy that terminates HTTPS for anything beyond a trusted home network, or bind it to `127.0.0.1` (`--host 127.0.0.1`).
@@ -619,7 +663,7 @@ Always run `--dry-run` first to see every command and file.
 | macOS | user (LaunchAgent; runs while you are logged in) | `~/Library/Application Support/tm1814-led/venv` | `…/data` | `…/tm1814-led.env` (0600) | `~/Library/LaunchAgents/com.jewettg.tm1814-led.plist`; logs in `~/Library/Logs/tm1814-led/` |
 | Windows | user (task at logon) or administrator (task at startup as SYSTEM) | `%LOCALAPPDATA%\tm1814-led\venv` | `…\data` | `…\tm1814-led.env` | Scheduled Task "TM1814 LED Controller" running `pythonw -m tm1814_led serve --env-file …` |
 
-Steps: (1) create the system user (Linux system mode); (2) create a virtual environment with the current Python (≥3.9); (3) `pip install` **this checkout** into it (so the checkout can later be moved or deleted; installing requires running from a repository checkout); (4) put a `tm1814-led` link on your PATH (`/usr/local/bin` for a system install, `~/.local/bin` for a user install; skipped on Windows), (5) write the settings file (data dir, host, port, optional password and controller address); (6) write and enable the service; (7) print the URLs.
+The install also schedules the **watchdog** (section 11: macOS second launchd job `com.jewettg.tm1814-led-watchdog` with `StartInterval 180`; Linux `tm1814-led-watchdog.timer`/`.service` units; Windows task `TM1814 LED Watchdog`; cron `*/3`), and `--uninstall` removes it. Steps: (1) create the system user (Linux system mode); (2) create a virtual environment with the current Python (≥3.9); (3) `pip install` **this checkout** into it (so the checkout can later be moved or deleted; installing requires running from a repository checkout); (4) put a `tm1814-led` link on your PATH (`/usr/local/bin` for a system install, `~/.local/bin` for a user install; skipped on Windows), (5) write the settings file (data dir, host, port, optional password and controller address); (6) write and enable the service; (7) print the URLs.
 
 `--uninstall` stops and removes the service and settings file but **keeps your data**; add `--purge` to delete the program folder, data, and (Linux system mode) the `tm1814` user. It asks for confirmation unless `--yes`. `--service-status` shows the service state.
 
@@ -636,9 +680,10 @@ tm1814-led                     list the commands
 tm1814-led serve [--host ADDR] [--port N] [--data-dir DIR] [--controller-host IP] [--simulate]
                  [--password PW] [--env-file FILE] [--log-level LEVEL]
 tm1814-led install|uninstall|service      same as --install / --uninstall / --service-status (section 14)
+tm1814-led watchdog [--env-file FILE]     one independent health check (run by the system scheduler)
 
  service commands (via the running web service):
-tm1814-led status | effects [text] [--native|--fixed|--animated] | runlists | schedules
+tm1814-led status | health | find | effects [text] [--native|--fixed|--animated] | runlists | schedules
 tm1814-led play NAME [--effect|--runlist] [--for SECONDS] | stop | next | pause | resume
 tm1814-led brightness 0-100
 tm1814-led logs [-n N] [--since WHEN] [--until WHEN] [--level info|warning|error] [--grep TEXT] [-f]
@@ -687,6 +732,11 @@ pytest -q
 | `test_api.py` | every route group end to end with the simulated controller, auth, error codes |
 | `test_installer.py` | file contents per OS, mode selection, address detection (VPN-safe), a password is always set, a full install against a fake command runner, dry runs |
 | `test_password.py` | hashing and salting, an override beating the settings-file password, signing everyone else out, restarts, the installer's password winning, the CLI `password` command |
+| `test_health.py` | the monitor: failure thresholds, incidents, recovery and re-sending the effect, following an IP change by MAC, search rate limit, learning the MAC, proof-of-life shortcut, alert de-duplication and reminders and recovery, worker supervision and the exit after repeated stalls, nudging |
+| `test_netscan.py` | parsing `ifconfig`/`ip`/`ipconfig`, VPN and virtual interfaces excluded, sweep limits, discovery against a local UDP responder, MAC matching, diagnosis |
+| `test_alerts.py` | email (STARTTLS, login, recipients), webhook headers, failures never raise |
+| `test_watchdog.py` | one check at a time: restart after two bad checks, the hourly restart limit, alert once, reminders, recovery, unreadable database, restart commands per OS |
+| `test_health_api.py` | the health endpoints, the public liveness route, write-only SMTP password, MAC cleared on address change, new settings validated |
 | `test_auth.py` | login page and cookie sessions, redirects, forged/expired tokens, throttling, no cache, Basic rejected |
 | `test_cli.py` | the real CLI against a live local service: password prompt once per terminal session, session cache, name matching, every command, direct commands against a fake controller |
 

@@ -57,6 +57,8 @@ def group_by_color(items: Dict[int, Pixel], max_groups: int) -> Dict[Pixel, List
 
 
 class Controller:
+    simulated = False
+
     def __init__(self, host: str = "", port: int = P.TCP_PORT, *, min_gap: float = 0.03, timeout: float = 4.0,
                  led_count: int = 0, max_groups: int = 10, refresh_interval: float = 20.0):
         self.host = host
@@ -72,6 +74,7 @@ class Controller:
         self.last_state: Optional[State] = None
         self.commands_sent = 0
         self.frames_sent = 0
+        self.last_ok = 0.0                         # time.time() of the last successful send or state reply
         self._sock: Optional[socket.socket] = None
         self._lock = threading.RLock()
         self._counter = 0
@@ -81,6 +84,14 @@ class Controller:
         self._in_scribble = False
         self._last_full = 0.0
         self._rate_window: List[float] = []
+
+    def set_address(self, host: str, port: Optional[int] = None) -> None:
+        """Point at a new address (the controller moved): drops the old connection and the cached picture."""
+        with self._lock:
+            self.host = host
+            if port:
+                self.port = port
+            self.close()
 
     # ------------------------------------------------------------ connection
     @property
@@ -193,6 +204,7 @@ class Controller:
                 log.info("send failed (%s); reconnecting and trying once more", exc)
         now = time.monotonic()
         self._last_send = now
+        self.last_ok = time.time()
         self.commands_sent += 1
         self._rate_window = [t for t in self._rate_window if now - t < 5.0] + [now]
         self._since_drain += 1
@@ -237,6 +249,7 @@ class Controller:
                 state = P.parse_state(buf)
                 if state:
                     self.last_state = state
+                    self.last_ok = time.time()
                     self.detected_led_count = state.led_count
                     return state
             return None
@@ -323,6 +336,8 @@ class Controller:
 
 class SimulatedController(Controller):
     """Same interface, no network. Records what would be sent; useful for `--simulate`, demos and tests."""
+
+    simulated = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

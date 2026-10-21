@@ -21,6 +21,7 @@ from .auth import COOKIE, MIN_PASSWORD_LENGTH, Auth, fingerprint, hash_password
 from .config import default_data_dir
 from .controller import Controller, ControllerError, SimulatedController, discover
 from .db import Conflict, Database, NotFound
+from .health import ConnectionMonitor, STALL_SEC
 from .runner import DBLogHandler, Runner, ScheduleManager
 from .seed import seed_catalog
 
@@ -142,21 +143,26 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     logging.getLogger("tm1814").addHandler(logbuf)
     runner = Runner(db, controller)
     manager = ScheduleManager(db, runner)
+    monitor = ConnectionMonitor(db, controller, runner, manager)
+    runner.on_failure = monitor.nudge
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if start_background:
             runner.start()
             manager.start()
+            monitor.start()
             log.info("tm1814-led %s started%s", __version__, " (simulated controller)" if simulate else "")
         yield
         if start_background:
+            monitor.shutdown()
             manager.shutdown()
             runner.shutdown()
         logging.getLogger("tm1814").removeHandler(logbuf)
 
     app = FastAPI(title="tm1814-led", version=__version__, lifespan=lifespan)
     app.state.db, app.state.controller, app.state.runner, app.state.manager = db, controller, runner, manager
+    app.state.monitor = monitor
 
     # ---- login page + session cookie (the web page is the only interface)
     env_fp = fingerprint(password)
@@ -166,7 +172,7 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
         override = None
     auth = Auth(password, db.auth_secret(), override=override)
     app.state.auth = auth
-    PUBLIC = {"/login", "/api/login", "/api/auth", "/style.css", "/favicon.ico"}
+    PUBLIC = {"/login", "/api/login", "/api/auth", "/api/health/live", "/style.css", "/favicon.ico"}
 
     @app.middleware("http")
     async def require_login(request: Request, call_next):
@@ -268,7 +274,10 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
                 active = {"id": manager.active_id, "name": db.get_schedule(manager.active_id)["name"]}
             except NotFound:
                 pass
+        h = monitor.snapshot()
         return {**st, "version": __version__, "active_schedule": active, "upcoming": manager.upcoming(count=3),
+                "health": {k: h[k] for k in ("state", "since", "last_ok", "failures", "unreachable_for_sec", "error")}
+                          | {"diagnosis": h["diagnosis"].get("summary", ""), "host": h["host"]},
                 "needs_setup": not db.settings()["controller_host"] and not simulate,
                 "has_location": place.has_location}
 
@@ -304,14 +313,55 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     def get_settings():
         out = db.settings()
         out.pop("seeded_keys", None)
+        out["smtp_password_set"] = bool(out.pop("smtp_password", ""))     # the password is write-only
         return out
 
     @app.put("/api/settings")
     def put_settings(changes: Dict[str, Any]):
         changes.pop("seeded_keys", None)
+        changes.pop("smtp_password_set", None)
+        if changes.get("smtp_password") is None:
+            changes.pop("smtp_password", None)                            # not sent = keep the saved one
+        before = db.settings()
+        if ("controller_host" in changes and str(changes["controller_host"] or "").strip() != before["controller_host"]
+                and "controller_mac" not in changes):
+            changes["controller_mac"] = ""                                # a different address: learn its MAC again
         db.update_settings(changes)
         runner.apply_settings()
         return get_settings()
+
+    # ---------------------------------------------------------------- health and self-healing
+    @app.get("/api/health/live")
+    def health_live():
+        """Public and secret-free: lets the independent watchdog tell whether this program is alive and not wedged."""
+        snap = monitor.snapshot()["heartbeat"]
+        ages = [v for v in snap.values() if v is not None]
+        return {"ok": all(a < STALL_SEC for a in ages), "version": __version__, "heartbeat": snap,
+                "uptime_sec": int(time.time() - runner.started_at)}
+
+    @app.get("/api/health")
+    def health():
+        return {**monitor.snapshot(), "incidents": db.list_incidents(20)}
+
+    @app.get("/api/incidents")
+    def incidents(limit: int = 50):
+        return db.list_incidents(limit)
+
+    @app.post("/api/health/recover")
+    def health_recover():
+        return monitor.recover_now()
+
+    @app.post("/api/health/test-alert")
+    def health_test_alert():
+        from . import alerts as alerts_mod
+        cfg = db.settings()
+        if not alerts_mod.channels(cfg):
+            raise ValueError("No alert channel is set up yet: enter an email address and mail server, or a webhook URL.")
+        ok, via = alerts_mod.send(cfg, "Test alert", "This is a test from the LED Controller program. If you can read this, "
+                                                      "alerts are working.")
+        if not ok:
+            raise ValueError("The test alert could not be delivered; see the Logs page for the reason.")
+        return {"sent": True, "channels": via}
 
     @app.get("/api/controller/state")
     def controller_state():

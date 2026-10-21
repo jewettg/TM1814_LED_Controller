@@ -164,8 +164,12 @@ def build_parser() -> argparse.ArgumentParser:
     add("install", "install as a background service (same as --install; try: install --help)", [], "run")
     add("uninstall", "stop and remove the service (same as --uninstall)", [], "run")
     add("service", "show whether the service is running and its addresses (same as --service-status)", [], "run")
+    w = add("watchdog", "one independent health check of the service; restarts it if stuck (run by the system scheduler)", [], "run")
+    w.add_argument("--env-file", default=None, help="file of KEY=VALUE settings (used by the installed job)")
 
     add("status", "what is playing, the controller, and the next scheduled runs", [svc], "service")
+    add("health", "the connection to the controller: state, diagnosis and recent incidents", [svc], "service")
+    add("find", "search the network for the controller now and follow it if its address changed", [svc], "service")
     e = add("effects", "list the effects in the catalog", [svc], "service")
     e.add_argument("search", nargs="?", default="", help="only names containing this text")
     e.add_argument("--native", action="store_true", help="only controller-native effects")
@@ -317,6 +321,61 @@ def cmd_status(a, out: Out) -> int:
     out.say(out.p(f"LED Controller {st['version']}", "bold") + out.p(f"   {_service(a, out).url}", "dim"))
     out.kv(rows)
     return 0
+
+
+def _ago(ts: Optional[float]) -> str:
+    return fmt_secs(max(0.0, time.time() - ts)) + " ago" if ts else "never"
+
+
+def cmd_health(a, out: Out) -> int:
+    h = _service(a, out).get("/api/health")
+    if a.json:
+        out.json(h)
+        return 0
+    state = h["state"]
+    dot = out.p("●", {"online": "green", "degraded": "yellow", "offline": "red"}.get(state, "yellow"))
+    rows = [("Connection", f"{dot} {state}" + (f" for {fmt_secs(time.time() - h['since'])}" if h.get("since") else "")),
+            ("Controller", f"{h['host'] or '(no address set)'}   ID {h['mac'] or 'not learned yet'}"),
+            ("Last answered", _ago(h["last_ok"]))]
+    if h["failures"]:
+        rows.append(("Not answering", f"{h['failures']} checks in a row, {fmt_secs(h['unreachable_for_sec'] or 0)}: {h['error']}"))
+    if h["diagnosis"].get("summary"):
+        rows.append(("Likely reason", h["diagnosis"]["summary"]))
+    rows.append(("Alerts", ", ".join(h["alert_channels"]) or out.p("none set up (Settings > Self-healing and alerts)", "dim")))
+    hb = h["heartbeat"]
+    rows.append(("Heartbeat", f"worker {hb['runner_sec']} s, schedules {hb['schedules_sec']} s, monitor {hb['monitor_sec']} s"))
+    out.kv(rows)
+    if h["incidents"]:
+        out.say()
+        out.table(("STARTED", "LASTED", "WHAT HAPPENED"),
+                  [(fmt_when(dt.datetime.fromtimestamp(i["started"]).astimezone().isoformat()),
+                    "still going" if i["open"] else fmt_secs(i["duration_sec"]),
+                    i["resolution"] or i["summary"]) for i in h["incidents"][:10]])
+    return 0
+
+
+def cmd_find(a, out: Out) -> int:
+    r = _service(a, out).post("/api/health/recover")
+    if a.json:
+        out.json(r)
+    elif r["moved"]:
+        out.ok(f"The controller had moved: {r['was']} -> {out.p(r['host'], 'bold')}. The program is following it.")
+    elif r["state"] == "online":
+        out.ok(f"The controller is answering at {r['host']}; nothing needed fixing.")
+    else:
+        out.fail("The controller was not found on the network." + ("" if r["mac_known"] else
+                 " Its ID (MAC address) is not known yet, so it cannot be recognized if it moved; it is learned the first time it answers."))
+    return 0 if (r["moved"] or r["state"] == "online") else 1
+
+
+def cmd_watchdog(a, out: Out) -> int:
+    from .watchdog import run_once
+    r = run_once()
+    if r["ok"]:
+        out.say("watchdog: OK" + ("; " + "; ".join(r["actions"]) if r["actions"] else ""))
+        return 0
+    out.say("watchdog: PROBLEM - " + r["problem"] + ("; " + "; ".join(r["actions"]) if r["actions"] else ""))
+    return 1
 
 
 def cmd_effects(a, out: Out) -> int:
@@ -625,7 +684,7 @@ def _serve(a) -> int:
 
 
 COMMANDS: Dict[str, Callable] = {
-    "status": cmd_status, "effects": cmd_effects, "runlists": cmd_runlists, "schedules": cmd_schedules,
+    "status": cmd_status, "health": cmd_health, "find": cmd_find, "effects": cmd_effects, "runlists": cmd_runlists, "schedules": cmd_schedules,
     "play": cmd_play, "stop": cmd_simple("/api/control/stop", "Stopped"),
     "next": cmd_simple("/api/control/next", "Skipped to the next effect"),
     "pause": cmd_simple("/api/control/pause", "Paused"), "resume": cmd_simple("/api/control/resume", "Resumed"),
@@ -653,5 +712,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = parser.parse_args(argv)
     if a.command == "serve":
         return _serve(a)
+    if a.command == "watchdog":
+        return cmd_watchdog(a, Out(color=False))
     out = Out(color=not getattr(a, "no_color", False), as_json=getattr(a, "json", False))
     return _guard(lambda: COMMANDS[a.command](a, out), out)

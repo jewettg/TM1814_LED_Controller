@@ -23,12 +23,13 @@ export async function settings(ctx) {
   const host = h('input', { type: 'text', id: hostId, value: st.controller_host, placeholder: 'For example: 192.168.1.50', autocomplete: 'off', spellcheck: 'false' });
   host.addEventListener('input', () => { st.controller_host = host.value.trim(); });
   const found = h('div');
+  let sendMac = false, macIn = null;       // the controller ID is only sent when it was changed here
   const testOut = h('div', { 'aria-live': 'polite' });
   const findBtn = h('button', { type: 'button', onclick: act(async () => {
     render(found, h('span', { class: 'muted' }, 'Searching the network (about 2 seconds)...'));
     const list = await api.post('/controller/discover');
     render(found, list.length ? h('div', { class: 'stack' }, h('div', { class: 'small muted' }, 'Found ' + list.length + ' controller' + (list.length === 1 ? '' : 's') + '. Click one to use its address.'),
-      list.map((c) => h('button', { type: 'button', style: { width: '100%', justifyContent: 'flex-start' }, onclick: () => { host.value = c.ip; st.controller_host = c.ip; toast('Address filled in. Remember to Save.', 'info', 3000); } },
+      list.map((c) => h('button', { type: 'button', style: { width: '100%', justifyContent: 'flex-start' }, onclick: () => { host.value = c.ip; st.controller_host = c.ip; st.controller_mac = c.mac; sendMac = true; if (macIn) macIn.value = c.mac; toast('Address and ID filled in. Remember to Save.', 'info', 3000); } },
         c.ip + '  •  ' + c.model + '  •  ' + c.mac)))
       : h('span', { class: 'muted' }, 'No controllers answered. Make sure it is powered on and on the same network, or type the address by hand.'));
   }) }, 'Find controllers');
@@ -87,16 +88,44 @@ export async function settings(ctx) {
     } catch (e) { pwErr.textContent = e.message; }
   }) }, 'Change password');
 
+  // ---- self-healing and alerts
+  const txt = (key, label, help, { type = 'text', placeholder = '' } = {}) => {
+    const id = nextId('t');
+    const i = h('input', { type, id, value: st[key] || '', placeholder, autocomplete: 'off', spellcheck: 'false' });
+    i.addEventListener('input', () => { st[key] = i.value.trim(); });
+    return F(label, i, help, id);
+  };
+  const macId = nextId('mac');
+  macIn = h('input', { type: 'text', id: macId, value: st.controller_mac || '', placeholder: 'Learned automatically', autocomplete: 'off', spellcheck: 'false' });
+  macIn.addEventListener('input', () => { st.controller_mac = macIn.value.trim(); sendMac = true; });
+  let smtpPw = '';
+  const pwId = nextId('smtppw');
+  const smtpPwIn = h('input', { type: 'password', id: pwId, autocomplete: 'new-password', placeholder: st.smtp_password_set ? '(saved - leave blank to keep it)' : '' });
+  smtpPwIn.addEventListener('input', () => { smtpPw = smtpPwIn.value; });
+  const alertMsg = h('div', { class: 'inline-error', role: 'status' });
+  const testAlertBtn = h('button', { type: 'button', onclick: act(async () => {
+    alertMsg.textContent = ''; alertMsg.style.color = '';
+    await save(true);
+    try { const r = await api.post('/health/test-alert'); alertMsg.style.color = 'var(--success)'; alertMsg.textContent = 'Sent through ' + r.channels.join(' and ') + '. Check your inbox or phone.'; }
+    catch (e) { alertMsg.textContent = e.message; }
+  }) }, 'Send a test alert');
+
   async function save(quiet) {
     showErr(null);
     const body = {
       controller_host: st.controller_host, controller_port: st.controller_port, led_count: st.led_count, fps: st.fps, min_gap_ms: st.min_gap_ms,
       max_groups: st.max_groups, brightness: st.brightness, idle_action: st.idle_action, idle_color: st.idle_color,
       timezone: st.timezone, latitude: st.latitude, longitude: st.longitude, log_retention_days: st.log_retention_days,
+      health_check_sec: st.health_check_sec, alert_after_minutes: st.alert_after_minutes, alert_reminder_hours: st.alert_reminder_hours,
+      alert_email: st.alert_email, smtp_host: st.smtp_host, smtp_port: st.smtp_port, smtp_user: st.smtp_user, smtp_tls: st.smtp_tls,
+      smtp_from: st.smtp_from, alert_webhook: st.alert_webhook,
     };
+    if (smtpPw) body.smtp_password = smtpPw;             // write-only: sent only when typed
+    if (sendMac) body.controller_mac = st.controller_mac;
     try {
       const r = await api.put('/settings', body);
       Object.assign(cfg, r); invalidate('settings'); setDisplayTz(r.timezone); await refresh();
+      smtpPw = ''; smtpPwIn.value = ''; sendMac = false; macIn.value = r.controller_mac || ''; st.controller_mac = r.controller_mac; st.smtp_password_set = r.smtp_password_set;
       if (!quiet) toast('Settings saved', 'success');
     } catch (e) { showErr(e); throw e; }
   }
@@ -124,6 +153,20 @@ export async function settings(ctx) {
         h('div', { class: 'form-grid' }, F('Latitude', latIn, null, latIn.id), F('Longitude', lonIn, null, lonIn.id)),
         h('div', { class: 'row' }, geoBtn),
         h('p', { class: 'help' }, 'Latitude and longitude are needed to work out sunrise and sunset for schedules. Without them, rough default times are used.')),
+      h('section', { class: 'card stack' }, h('h2', null, 'Self-healing and alerts'),
+        h('p', { class: 'help' }, 'The program checks that the controller is answering and, if its network address changes (for example after a router restart), finds it again by its ID and follows it automatically. Every problem is recorded on the Dashboard. To be told about a problem, set up an email or a webhook below.'),
+        h('div', { class: 'form-grid' }, F('Controller ID (MAC address)', macIn, 'What identifies your controller even if its address changes. Learned automatically; clear it only if you replaced the controller.', macId),
+          num('health_check_sec', 'Check every (seconds)', 'How often to check the controller while all is well (10 to 600). It checks every 10 seconds while something is wrong.', { min: 10, max: 600 })),
+        h('div', { class: 'form-grid' }, num('alert_after_minutes', 'Alert me after (minutes)', 'Send one alert when the controller has been unreachable this long.', { min: 1, max: 1440 }),
+          num('alert_reminder_hours', 'Remind me every (hours)', 'While it stays down.', { min: 1, max: 168 })),
+        h('h3', { style: { margin: '8px 0 0' } }, 'Email'),
+        h('div', { class: 'form-grid' }, txt('alert_email', 'Send alerts to', 'One or more addresses, separated by commas.', { placeholder: 'you@example.com' }), txt('smtp_from', 'From address', 'Optional.')),
+        h('div', { class: 'form-grid' }, txt('smtp_host', 'Mail server', 'For example smtp.gmail.com, or your own relay.'), num('smtp_port', 'Port', '25, 587 (STARTTLS) or 465 (SSL).', { min: 1, max: 65535 })),
+        h('div', { class: 'form-grid' }, txt('smtp_user', 'Mail user name', 'Leave blank for a relay that needs no login.'), F('Mail password', smtpPwIn, 'Saved on this computer and never shown again.', pwId)),
+        h('div', null, switchEl(st.smtp_tls, (v) => { st.smtp_tls = v; }, 'Use encryption (STARTTLS) when the server offers it')),
+        h('h3', { style: { margin: '8px 0 0' } }, 'Webhook (phone notifications)'),
+        txt('alert_webhook', 'Webhook address', 'An http(s) address that receives the alert as a POST, for example https://ntfy.sh/your-secret-topic (then install the free ntfy app on your phone).', { placeholder: 'https://ntfy.sh/your-secret-topic' }),
+        h('div', { class: 'row' }, testAlertBtn), alertMsg),
       h('div', { class: 'row' }, h('button', { class: 'primary', type: 'button', onclick: act(async () => { try { await save(false); } catch (e) { /* shown inline */ } }) }, 'Save settings')),
       h('section', { class: 'card stack' }, h('h2', null, 'Password'),
         h('p', { class: 'help' }, 'Change the password for this web page and the command line. You stay signed in here; every other browser and terminal must sign in again with the new one.'),
