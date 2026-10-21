@@ -22,8 +22,19 @@ class FakeSMTP:
     def starttls(self, context=None):
         self.calls.append("starttls")
 
-    def login(self, user, password):
-        self.calls.append(("login", user, password))
+    esmtp_features = {"auth": "LOGIN PLAIN XOAUTH2"}
+    user = password = None
+
+    def ehlo_or_helo_if_needed(self):
+        pass
+
+    def auth_plain(self, challenge=None):
+        return ""
+
+    auth_login = auth_plain
+
+    def auth(self, mechanism, authobject, initial_response_ok=True):
+        self.calls.append(("login", self.user, self.password))
 
     def send_message(self, msg):
         self.sent.append(msg)
@@ -156,7 +167,7 @@ def test_send_detailed_can_target_one_channel_and_explains_failures(smtp, monkey
 def test_failure_reasons_are_human_readable(monkeypatch):
     import smtplib as sm
     class Refuse(FakeSMTP):
-        def login(self, user, password):
+        def auth(self, mechanism, authobject, initial_response_ok=True):
             raise sm.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted. Learn more at https://support.google.com/mail")
     monkeypatch.setattr(alerts.smtplib, "SMTP", Refuse)
     _, failed = alerts.send_detailed(EMAIL, "s", "b")
@@ -172,11 +183,8 @@ def test_failure_reasons_are_human_readable(monkeypatch):
 def test_gmail_asking_for_an_app_password_is_explained_plainly(monkeypatch):
     import smtplib as sm
     class Gmail(FakeSMTP):
-        def __init__(self, *a, **k):
-            super().__init__(*a, **k)
-            self.esmtp_features = {"auth": "LOGIN PLAIN XOAUTH2"}
-        def login(self, user, password):
-            assert self.esmtp_features["auth"] == "PLAIN"            # only ONE method is tried, so the real refusal is shown
+        def auth(self, mechanism, authobject, initial_response_ok=True):
+            assert mechanism == "PLAIN"                              # only ONE method is tried, so the real refusal is shown
             raise sm.SMTPAuthenticationError(534, b"5.7.9 Application-specific password required. Learn more")
     monkeypatch.setattr(alerts.smtplib, "SMTP", Gmail)
     _, failed = alerts.send_detailed(EMAIL, "s", "b")
@@ -186,7 +194,7 @@ def test_gmail_asking_for_an_app_password_is_explained_plainly(monkeypatch):
 def test_a_wrong_password_is_reported_as_such(monkeypatch):
     import smtplib as sm
     class Strict(FakeSMTP):
-        def login(self, user, password):
+        def auth(self, mechanism, authobject, initial_response_ok=True):
             raise sm.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
     monkeypatch.setattr(alerts.smtplib, "SMTP", Strict)
     _, failed = alerts.send_detailed(EMAIL, "s", "b")
