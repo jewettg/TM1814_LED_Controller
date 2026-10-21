@@ -237,3 +237,19 @@ def test_fixed_effect_is_repainted_if_the_controller_forgets_it(rig):
         assert wait_for(lambda: len([s for s in ctrl.sent if s[10:12] == bytes([0xE1, 0x26])]) > before, 6)
     finally:
         R.HEALTH_INTERVAL = 30.0
+
+
+def test_upcoming_marks_overridden_windows(tmp_path):
+    from tm1814_led.db import Database
+    import types
+    from tm1814_led.runner import ScheduleManager
+    d = Database(str(tmp_path / "u.db"))
+    r = d.create_runlist("L", True, False, "", [{"effect_id": d.create_effect("E", "solid", {"color": "#ff0000"})["id"], "duration_sec": 60}])
+    spec = {"start_date": None, "end_date": None, "start_time": "18:00", "end_time": "23:00", "start_offset": 0,
+            "end_offset": 0, "repeat": {"type": "daily", "interval": 1}}
+    d.create_schedule("Low", r["id"], spec, True, 0)
+    d.create_schedule("High", r["id"], spec, True, 100)
+    got = ScheduleManager(d, types.SimpleNamespace()).upcoming(count=10)
+    by = {w["name"]: w for w in got}
+    assert by["Low"]["status"] == "overridden" and by["Low"]["overridden_by"][0]["name"] == "High"
+    assert by["High"]["status"] == "runs" and by["High"]["priority"] == 100
