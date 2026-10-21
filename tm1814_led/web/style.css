@@ -327,3 +327,8 @@ dialog .dialog-actions { display: flex; gap: var(--space-2); justify-content: fl
 
 .struck { text-decoration: line-through; color: var(--text-muted); }
 .occ-list li.win { margin-bottom: 8px; }
+
+/* Quick controls: generous gaps so color blocks and buttons never look like they touch */
+.row.roomy { gap: var(--space-3); margin-top: var(--space-2); }
+.row.swatch-row { gap: var(--space-3); margin-top: var(--space-3); }
+button.swatch { width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; border: 2px solid var(--border-strong); border-radius: var(--radius-sm); }

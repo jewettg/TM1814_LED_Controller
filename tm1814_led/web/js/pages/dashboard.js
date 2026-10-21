@@ -55,8 +55,8 @@ export async function dashboard(ctx) {
 
   const colorIn = h('input', { type: 'color', id: 'dash-color', value: '#ff5a00', 'aria-label': 'Solid color' });
   const colorBtn = h('button', { type: 'button', onclick: act(async () => { await api.post('/control/color', { color: colorIn.value }); await refresh(); }) }, 'Show this color');
-  const swatchRow = h('div', { class: 'row tight' }, ['#ff0000', '#ff5a00', '#ffd27a', '#00ff00', '#00b8d9', '#0000ff', '#8c00ff', '#ffffff'].map((c) =>
-    h('button', { type: 'button', class: 'icon small', 'aria-label': 'Show ' + c, title: c, style: { background: c, borderColor: 'var(--border-strong)' },
+  const swatchRow = h('div', { class: 'row swatch-row' }, ['#ff0000', '#ff5a00', '#ffd27a', '#00ff00', '#00b8d9', '#0000ff', '#8c00ff', '#ffffff'].map((c) =>
+    h('button', { type: 'button', class: 'icon swatch', 'aria-label': 'Show ' + c, title: c, style: { background: c, borderColor: 'var(--border-strong)' },
       onclick: act(async () => { colorIn.value = c; await api.post('/control/color', { color: c }); await refresh(); }) })));
 
   const controls = h('section', { class: 'card stack', 'aria-label': 'Quick controls' },
@@ -66,9 +66,9 @@ export async function dashboard(ctx) {
       h('div', { class: 'slider-row' }, bright, brightVal),
       h('div', { class: 'help' }, 'Applies to everything the lights show.')),
     h('div', null, h('label', { class: 'field-label', for: 'dash-color' }, 'Quick solid color'),
-      h('div', { class: 'row' }, colorIn, colorBtn), swatchRow),
+      h('div', { class: 'row roomy' }, colorIn, colorBtn), swatchRow),
     h('div', null, h('span', { class: 'field-label' }, 'Power'),
-      h('div', { class: 'row' },
+      h('div', { class: 'row roomy' },
         h('button', { type: 'button', onclick: act(async () => { await api.post('/control/power', { on: true }); await refresh(); toast('Power on sent'); }) }, 'Power on'),
         h('button', { type: 'button', onclick: act(async () => { await api.post('/control/power', { on: false }); await refresh(); toast('Power off sent'); }) }, 'Power off')),
       h('div', { class: 'help' }, 'Switching power stops whatever is playing.')));
