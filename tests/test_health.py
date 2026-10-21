@@ -212,7 +212,7 @@ def test_a_playing_effect_counts_as_proof_of_life_so_no_probe_is_sent(rig):
 def sent(monkeypatch):
     box = []
 
-    def fake_send(cfg, subject, body):
+    def fake_send(cfg, subject, body, kind=""):
         box.append((subject, body))
         return True, ["webhook"]
     monkeypatch.setattr(alerts, "send", fake_send)
@@ -256,11 +256,15 @@ def test_a_short_outage_that_never_alerted_sends_no_recovery_message(rig, sent):
     assert sent == []
 
 
-def test_moving_to_a_new_address_alerts_immediately(rig, sent):
+def test_moving_to_a_new_address_is_not_critical_so_it_only_alerts_if_asked(rig, sent):
     rig.db.update_settings({"alert_webhook": "http://x/y"})
     rig.ctrl.up_at = NEW
     rig.found = {"ip": NEW, "mac": MAC}
     rig.tick()
+    assert sent == [] and rig.db.settings()["controller_host"] == NEW        # followed silently; recorded as an incident
+    rig2 = Rig(alert_webhook="http://x/y", alert_on_move=True)
+    rig2.ctrl.up_at, rig2.found = NEW, {"ip": NEW, "mac": MAC}
+    rig2.tick()
     assert len(sent) == 1 and sent[0][0] == f"Controller moved to {NEW}" and "reservation" in sent[0][1]
 
 
@@ -363,3 +367,188 @@ def test_the_runner_wakes_the_monitor_on_its_first_failed_command():
     runner._guard("test", boom, runner._gen)
     runner._guard("test", boom, runner._gen)
     assert woken == [1]                                     # once per streak of failures, not once per attempt
+
+
+# ---- keeping the number of alerts small (ntfy.sh's free tier allows 250 messages a day)
+def outage(rig, minutes):
+    """The controller is down for `minutes`, then comes back (checked every minute)."""
+    rig.ctrl.up_at = None
+    for _ in range(int(minutes)):
+        rig.tick(60)
+    rig.ctrl.up_at = OLD
+    rig.tick(60)
+
+
+def test_a_controller_that_flaps_all_day_cannot_flood_the_phone(rig, monkeypatch):
+    stamps = []
+    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (stamps.append((rig.t[0], kind)), (True, ["webhook"]))[1])
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1, "alert_daily_limit": 20,
+                            "alert_min_gap_minutes": 60})
+    for _ in range(96):                                       # two days of 12-minute outages every 30 minutes
+        outage(rig, 12)
+        for _ in range(17):
+            rig.tick(60)
+    assert len(stamps) > 20                                   # it did keep alerting over the two days ...
+    times = [t for t, _ in stamps]
+    for i, t in enumerate(times):                             # ... but never more than 20 in ANY rolling 24 hours
+        assert len([x for x in times if t - 86400 < x <= t]) <= 20
+    downs = [t for t, kind in stamps if kind == "down"]
+    assert all(b - a >= 3600 for a, b in zip(downs, downs[1:]))      # and never two "down" alerts within the hour
+
+
+def test_only_critical_kinds_may_use_the_last_part_of_the_budget():
+    b = alerts.Budget({}, limit=10, min_gap_sec=0)
+    for _ in range(7):
+        b.record_sent("down", 1000.0)
+    assert b.check("reminder", 1001.0) and "critical" in b.check("moved", 1001.0)      # 70% used: non-critical stops
+    assert b.check("recovered", 1001.0) is None and b.check("watchdog", 1001.0) is None  # critical still allowed
+    for _ in range(3):
+        b.record_sent("down", 1000.0)
+    assert "limit of 10" in b.check("recovered", 1002.0) and b.check("test", 1002.0) is None   # a hand-sent test always works
+
+
+def test_the_daily_limit_rolls_over_after_24_hours():
+    b = alerts.Budget({}, limit=3, min_gap_sec=0)
+    for i in range(3):
+        b.record_sent("down", 1000.0 + i)
+    assert b.check("down", 2000.0)
+    later = 1002.0 + 86399                                    # the first two have aged out; the newest has not
+    assert b.check("down", later) is None and b.used(later) == 1
+
+
+def test_a_new_down_alert_waits_for_the_minimum_gap():
+    b = alerts.Budget({}, limit=50, min_gap_sec=3600)
+    b.record_sent("down", 1000.0)
+    assert "flapping" in b.check("down", 1000.0 + 1800) and "flapping" in b.check("watchdog", 1000.0 + 1800)
+    assert b.check("down", 1000.0 + 3601) is None and b.check("recovered", 1000.0 + 5) is None
+
+
+def test_failed_deliveries_back_off_instead_of_retrying_every_check():
+    b = alerts.Budget({}, limit=50, min_gap_sec=0)
+    b.record_failure(1000.0)
+    assert b.check("down", 1100.0) and b.check("down", 1000.0 + 301) is None
+    b.record_failure(1400.0); b.record_failure(1500.0)
+    assert b.s["next_try"] == 1500.0 + 1200.0                                       # 5, 10, 20 minutes ...
+    for _ in range(10):
+        b.record_failure(2000.0)
+    assert b.s["next_try"] == 2000.0 + 3600.0                                       # ... but never more than an hour
+    b.record_sent("down", 9000.0)
+    assert b.s["next_try"] == 0.0 and b.s["fails"] == 0
+
+
+def test_a_broken_channel_is_not_hammered_every_check(rig, monkeypatch):
+    calls = []
+    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (calls.append(kind), (False, []))[1])
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1})
+    rig.ctrl.up_at = None
+    for _ in range(60):                                       # an hour of 10-second checks, all failing to deliver
+        rig.tick(10)
+    assert len(calls) <= 4                                    # first try, then 5 min, 10 min, 20 min back-off
+
+
+def test_the_status_reports_how_much_of_the_budget_is_used(rig, sent):
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1, "alert_daily_limit": 5})
+    outage(rig, 3)
+    snap = rig.m.snapshot()["alerts"]
+    assert snap["limit"] == 5 and snap["sent_24h"] == 2 and snap["channels"] == ["webhook"] and snap["on_move"] is False
+
+
+def test_a_test_alert_always_goes_out_and_is_counted(rig, monkeypatch):
+    got = []
+    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (got.append(kind), (True, ["webhook"]))[1])
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_daily_limit": 1})
+    assert rig.m.send_test() == ["webhook"] and rig.m.send_test() == ["webhook"]       # even past the limit
+    assert got == ["test", "test"] and rig.m.snapshot()["alerts"]["sent_24h"] == 2
+    rig.db.update_settings({"alert_webhook": ""})
+    with pytest.raises(ValueError):
+        rig.m.send_test()
+
+
+def test_the_budget_survives_a_restart_of_the_program(rig, sent):
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1})
+    outage(rig, 3)
+    again = ConnectionMonitor(rig.db, rig.ctrl, rig.runner, finder=rig._find, prober=lambda h: None, diagnoser=rig._diagnose,
+                              clock=lambda: rig.t[0])
+    assert again.snapshot()["alerts"]["sent_24h"] == 2
+
+
+# ---- the log stays quiet unless something changes
+def test_routine_health_checks_write_nothing_to_the_log(caplog):
+    from test_controller import FakeController as TcpFake
+    from tm1814_led.controller import Controller
+    fake = TcpFake()
+    db = Database(":memory:")
+    db.update_settings({"controller_host": "127.0.0.1", "controller_port": fake.port, "controller_mac": MAC})
+    ctrl = Controller("127.0.0.1", fake.port, min_gap=0)
+    runner = FakeRunner(ctrl)
+    t = [1_000_000.0]
+    mon = ConnectionMonitor(db, ctrl, runner, clock=lambda: t[0])
+    try:
+        with caplog.at_level("INFO", logger="tm1814"):
+            for _ in range(30):                                   # half an hour of once-a-minute checks, each opening a connection
+                t[0] += 60
+                mon.tick()
+        assert mon.state == "online" and ctrl.commands_sent >= 30  # it really did talk to the controller each time
+        lines = [r.getMessage() for r in caplog.records]
+        assert lines == ["controller connection: unknown -> online"], lines     # and logged only the one change
+    finally:
+        fake.close(); db.close()
+
+
+def test_a_change_of_health_is_logged_once_each(rig, caplog):
+    with caplog.at_level("INFO", logger="tm1814"):
+        rig.tick()
+        rig.ctrl.up_at = None
+        for _ in range(6):
+            rig.tick(10)
+        rig.ctrl.up_at = OLD
+        for _ in range(4):
+            rig.tick(10)
+    changes = [r.getMessage() for r in caplog.records if "->" in r.getMessage()]
+    assert changes == ["controller connection: unknown -> online", "controller connection: online -> degraded",
+                       "controller connection: degraded -> offline", "controller connection: offline -> online"]
+
+
+def test_every_alert_event_is_logged_with_the_word_alert(rig, monkeypatch, caplog):
+    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (True, ["webhook"]))
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1, "alert_daily_limit": 20})
+    with caplog.at_level("INFO", logger="tm1814"):
+        outage(rig, 3)
+    alert_lines = [r for r in caplog.records if "ALERT" in r.getMessage()]
+    msgs = [r.getMessage() for r in alert_lines]
+    assert any("ALERT sent via webhook [down]" in m and "1 of 20 alerts used in the last 24 hours" in m for m in msgs)
+    assert any("ALERT sent via webhook [recovered]" in m and "2 of 20" in m for m in msgs)
+    assert all(r.levelname == "WARNING" for r in alert_lines)            # alerts stand out in a "warnings and errors" view
+
+
+def test_a_held_back_alert_says_why_but_only_once_an_hour(rig, monkeypatch, caplog):
+    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (True, ["webhook"]))
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1, "alert_daily_limit": 1})
+    with caplog.at_level("INFO", logger="tm1814"):
+        outage(rig, 3)                                                    # the one allowed alert is used
+        rig.ctrl.up_at = None
+        for _ in range(40):
+            rig.tick(60)                                                  # a second outage wants to alert: refused, every check
+    held = [r.getMessage() for r in caplog.records if "ALERT held back" in r.getMessage()]
+    assert held and len(held) <= 2 and "limit of 1 alerts per 24 hours" in held[0]
+
+
+def test_a_missing_channel_is_mentioned_once_not_every_check(rig, caplog):
+    rig.db.update_settings({"alert_after_minutes": 1})
+    with caplog.at_level("INFO", logger="tm1814"):
+        rig.ctrl.up_at = None
+        for _ in range(30):
+            rig.tick(30)
+    lines = [r.getMessage() for r in caplog.records if "no alert channel is set up" in r.getMessage()]
+    assert len(lines) == 1
+
+
+def test_a_failed_delivery_is_logged_with_the_retry_time(rig, monkeypatch, caplog):
+    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (False, []))
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_after_minutes": 1})
+    with caplog.at_level("INFO", logger="tm1814"):
+        rig.ctrl.up_at = None
+        for _ in range(8):
+            rig.tick(30)
+    failed = [r.getMessage() for r in caplog.records if "ALERT could not be delivered" in r.getMessage()]
+    assert len(failed) == 1 and "trying again at" in failed[0]

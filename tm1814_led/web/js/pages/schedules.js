@@ -183,7 +183,9 @@ export async function scheduleEditor(ctx) {
     return { start_date: y + '-10-25', end_date: y + '-10-31', start_time: 'sunset', end_time: '23:00', start_offset: 0, end_offset: 0, repeat: { type: 'daily', interval: 1 } };
   }
   const presets = h('div', { class: 'row' }, h('span', { class: 'small muted' }, 'Quick presets:'),
-    h('button', { type: 'button', class: 'small', onclick: () => setSpec({ ...defaultSpec(), start_time: 'sunset', end_time: '23:00' }, 'Every night') }, 'Every night from sunset to 11 pm'),
+    h('button', { type: 'button', class: 'small', onclick: () => setSpec({ ...defaultSpec(), start_time: 'sunset', end_time: 'sunrise', start_offset: 0, end_offset: 0 }, 'Dusk to dawn') }, 'Sunset to sunrise (all night)'),
+    h('button', { type: 'button', class: 'small', onclick: () => setSpec({ ...defaultSpec(), start_time: 'sunrise', end_time: 'sunset', start_offset: 0, end_offset: 0 }, 'Dawn to dusk') }, 'Sunrise to sunset (all day)'),
+    h('button', { type: 'button', class: 'small', onclick: () => setSpec({ ...defaultSpec(), start_time: 'sunset', end_time: '23:00', start_offset: 0, end_offset: 0 }, 'Every night') }, 'Sunset to 11 pm'),
     h('button', { type: 'button', class: 'small', onclick: () => setSpec({ ...defaultSpec(), repeat: { type: 'monthly_day', day: 1 } }, 'First of the month') }, 'First of every month'),
     h('button', { type: 'button', class: 'small', onclick: () => setSpec(halloweenSpec(), 'Halloween week') }, 'Halloween week'));
 
@@ -196,7 +198,7 @@ export async function scheduleEditor(ctx) {
       const r = await api.post('/schedules/preview', { spec: spec(), count: 8 }, { signal: ctl.signal });
       if (my !== seq) return;
       sumBox.textContent = r.summary;
-      render(warnBox, r.sun_estimated ? h('div', { class: 'banner warn' }, 'Sunrise and sunset times are rough estimates (about 7:00 and 19:00) because no location is set. ', h('a', { href: '#/settings' }, 'Set your latitude and longitude in Settings'), ' for accurate times.') : null);
+      render(warnBox, r.sun_estimated ? h('div', { class: 'banner warn' }, 'Sunrise and sunset times are rough estimates (about 7:00 and 19:00) because no place is set. ', h('a', { href: '#/settings' }, 'Enter your address in Settings'), ' for accurate times.') : null);
       render(occBox, r.windows.length ? h('ul', { class: 'occ-list' }, r.windows.map((w) => h('li', null, fmtWindow(w.start, w.end)))) : h('p', { class: 'muted' }, 'No upcoming windows with these settings.'));
     } catch (e) { if (e.name === 'AbortError' || my !== seq) return; sumBox.textContent = ''; render(warnBox, null); render(occBox, h('div', { class: 'inline-error' }, e.message)); }
   }

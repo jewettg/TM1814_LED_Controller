@@ -52,25 +52,45 @@ export async function settings(ctx) {
   const tz = h('input', { type: 'text', id: tzId, value: st.timezone, list: tzId + '-list', placeholder: 'Blank = this computer\'s time zone', autocomplete: 'off', spellcheck: 'false' });
   tz.addEventListener('input', () => { st.timezone = tz.value.trim(); });
   const tzList = h('datalist', { id: tzId + '-list' }, meta.timezones.map((z) => h('option', { value: z })));
-  const latIn = h('input', { type: 'number', id: nextId('lat'), step: 'any', min: -90, max: 90, value: st.latitude === null ? '' : st.latitude });
-  const lonIn = h('input', { type: 'number', id: nextId('lon'), step: 'any', min: -180, max: 180, value: st.longitude === null ? '' : st.longitude });
-  latIn.addEventListener('input', () => { st.latitude = latIn.value === '' ? null : Number(latIn.value); });
-  lonIn.addEventListener('input', () => { st.longitude = lonIn.value === '' ? null : Number(lonIn.value); });
-  const geoBtn = h('button', { type: 'button', onclick: (e) => {
-    if (!navigator.geolocation) { toast('This browser cannot share its location. Type the numbers instead.', 'error'); return; }
-    e.currentTarget.disabled = true; const b = e.currentTarget;
-    navigator.geolocation.getCurrentPosition((p) => {
-      b.disabled = false; st.latitude = Math.round(p.coords.latitude * 10000) / 10000; st.longitude = Math.round(p.coords.longitude * 10000) / 10000;
-      latIn.value = st.latitude; lonIn.value = st.longitude; toast('Location filled in. Remember to Save.', 'info', 3000);
-    }, (er) => {
-      b.disabled = false;
-      const why = !window.isSecureContext
-        ? 'Browsers only share a location with secure pages (https, or http://localhost). This page was opened at ' + location.origin + ', so the browser refused without asking. Open http://localhost:' + (location.port || 80) + ' on the computer that runs the program, or type the numbers instead.'
-        : (er.code === 1 ? 'The browser, or the computer\'s Location Services setting for the browser, said no. Allow it for this site, or type the numbers instead.'
-          : 'Could not get your location (' + er.message + '). Type the numbers instead.');
-      toast(why, 'error', 15000);
-    }, { timeout: 10000 });
-  } }, 'Use my location');
+  // ---- place: type an address, pick the match; only the place name is shown (the coordinates stay behind the scenes)
+  const useTz = h('button', { type: 'button', class: 'small', onclick: () => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) { tz.value = zone; st.timezone = zone; toast('Time zone set to ' + zone + '. Remember to Save.', 'info', 3000); showSun(); }
+  } }, "Use this computer's time zone");
+  const addrId = nextId('addr');
+  const addrIn = h('input', { type: 'text', id: addrId, placeholder: 'Street address, town or ZIP code', autocomplete: 'street-address', spellcheck: 'false' });
+  const placeNow = h('div', { class: 'help' });
+  const sunNow = h('div', { class: 'help', 'aria-live': 'polite' });
+  const results = h('div', { class: 'stack' });
+  function showPlace() {
+    placeNow.textContent = st.latitude !== null && st.latitude !== undefined
+      ? 'Using: ' + (st.location_name || 'your chosen place') : 'No place chosen yet: sunrise and sunset use rough default times (7:00 am and 7:00 pm).';
+  }
+  async function showSun() {
+    sunNow.textContent = '';
+    if (st.latitude === null || st.latitude === undefined) return;
+    try {
+      const q = new URLSearchParams({ latitude: String(st.latitude), longitude: String(st.longitude) });
+      if (st.timezone) q.set('timezone', st.timezone);
+      const r = await api.get('/location/sun?' + q.toString());
+      const t = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: st.timezone || undefined });
+      sunNow.textContent = r.configured ? 'Today there: sunrise ' + t(r.sunrise) + ', sunset ' + t(r.sunset) + ' (' + r.timezone + ')' + (st.timezone ? '' : '. Choose a time zone above if this looks off by hours.') : '';
+    } catch (e) { sunNow.textContent = ''; }
+  }
+  const lookupBtn = h('button', { type: 'button', onclick: act(async () => {
+    render(results, h('span', { class: 'muted' }, 'Looking it up...'));
+    try {
+      const r = await api.post('/location/search', { query: addrIn.value });
+      render(results, h('div', { class: 'stack' }, h('div', { class: 'small muted' }, 'Pick the right one:'),
+        r.results.map((c) => h('button', { type: 'button', style: { width: '100%', justifyContent: 'flex-start', textAlign: 'left' }, onclick: () => {
+          st.latitude = c.latitude; st.longitude = c.longitude; st.location_name = c.name;
+          render(results); showPlace(); showSun(); toast('Place chosen. Remember to Save.', 'info', 3000);
+        } }, c.name))));
+    } catch (e) { render(results, h('div', { class: 'inline-error', role: 'alert' }, e.message)); }
+  }) }, 'Look up');
+  addrIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookupBtn.click(); } });
+  const clearPlace = h('button', { type: 'button', class: 'small', onclick: () => { st.latitude = null; st.longitude = null; st.location_name = ''; render(results); showPlace(); showSun(); } }, 'Clear place');
+  showPlace(); showSun();
 
   // ---- change password
   const pwCur = h('input', { type: 'password', id: nextId('pwc'), autocomplete: 'current-password' });
@@ -103,6 +123,8 @@ export async function settings(ctx) {
   const smtpPwIn = h('input', { type: 'password', id: pwId, autocomplete: 'new-password', placeholder: st.smtp_password_set ? '(saved - leave blank to keep it)' : '' });
   smtpPwIn.addEventListener('input', () => { smtpPw = smtpPwIn.value; });
   const alertMsg = h('div', { class: 'inline-error', role: 'status' });
+  const usage = h('p', { class: 'help', 'aria-live': 'polite' });
+  api.get('/health').then((hl) => { usage.textContent = 'Alerts sent in the last 24 hours: ' + hl.alerts.sent_24h + ' of the ' + hl.alerts.limit + ' allowed.' + (hl.alerts.retry_at ? ' A delivery failed recently; the next try is at ' + new Date(hl.alerts.retry_at * 1000).toLocaleTimeString() + '.' : ''); }).catch(() => {});
   const testAlertBtn = h('button', { type: 'button', onclick: act(async () => {
     alertMsg.textContent = ''; alertMsg.style.color = '';
     await save(true);
@@ -115,10 +137,11 @@ export async function settings(ctx) {
     const body = {
       controller_host: st.controller_host, controller_port: st.controller_port, led_count: st.led_count, fps: st.fps, min_gap_ms: st.min_gap_ms,
       max_groups: st.max_groups, brightness: st.brightness, idle_action: st.idle_action, idle_color: st.idle_color,
-      timezone: st.timezone, latitude: st.latitude, longitude: st.longitude, log_retention_days: st.log_retention_days,
+      timezone: st.timezone, latitude: st.latitude, longitude: st.longitude, location_name: st.location_name, log_retention_days: st.log_retention_days,
       health_check_sec: st.health_check_sec, alert_after_minutes: st.alert_after_minutes, alert_reminder_hours: st.alert_reminder_hours,
       alert_email: st.alert_email, smtp_host: st.smtp_host, smtp_port: st.smtp_port, smtp_user: st.smtp_user, smtp_tls: st.smtp_tls,
       smtp_from: st.smtp_from, alert_webhook: st.alert_webhook,
+      alert_daily_limit: st.alert_daily_limit, alert_min_gap_minutes: st.alert_min_gap_minutes, alert_on_move: st.alert_on_move,
     };
     if (smtpPw) body.smtp_password = smtpPw;             // write-only: sent only when typed
     if (sendMac) body.controller_mac = st.controller_mac;
@@ -150,18 +173,25 @@ export async function settings(ctx) {
           F('When nothing is scheduled', idleSel, 'What the lights do after a run list ends or you press Stop.', idleSel.id), idleColorWrap)),
       h('section', { class: 'card stack' }, h('h2', null, 'Time and place'),
         h('div', { class: 'form-grid' }, F('Time zone', tz, 'Start typing to search, for example America/Chicago. Leave blank to use the computer\'s own zone.', tzId), tzList),
-        h('div', { class: 'form-grid' }, F('Latitude', latIn, null, latIn.id), F('Longitude', lonIn, null, lonIn.id)),
-        h('div', { class: 'row' }, geoBtn),
-        h('p', { class: 'help' }, 'Latitude and longitude are needed to work out sunrise and sunset for schedules. Without them, rough default times are used.')),
+        h('div', { class: 'row' }, useTz),
+        F('Where are your lights?', addrIn, 'Used only to work out sunrise and sunset for schedules. The address is looked up once (through OpenStreetMap) and only the place found is saved.', addrId),
+        h('div', { class: 'row' }, lookupBtn, clearPlace), results, placeNow, sunNow),
+      h('p', { class: 'help', style: { marginTop: '-8px' } }, 'Address lookup by OpenStreetMap Nominatim (data © OpenStreetMap contributors).'),
       h('section', { class: 'card stack' }, h('h2', null, 'Self-healing and alerts'),
         h('p', { class: 'help' }, 'The program checks that the controller is answering and, if its network address changes (for example after a router restart), finds it again by its ID and follows it automatically. Every problem is recorded on the Dashboard. To be told about a problem, set up an email or a webhook below.'),
         h('div', { class: 'form-grid' }, F('Controller ID (MAC address)', macIn, 'What identifies your controller even if its address changes. Learned automatically; clear it only if you replaced the controller.', macId),
           num('health_check_sec', 'Check every (seconds)', 'How often to check the controller while all is well (10 to 600). It checks every 10 seconds while something is wrong.', { min: 10, max: 600 })),
         h('div', { class: 'form-grid' }, num('alert_after_minutes', 'Alert me after (minutes)', 'Send one alert when the controller has been unreachable this long.', { min: 1, max: 1440 }),
           num('alert_reminder_hours', 'Remind me every (hours)', 'While it stays down.', { min: 1, max: 168 })),
+        h('h3', { style: { margin: '8px 0 0' } }, 'Keeping alerts to the important ones'),
+        h('p', { class: 'help' }, 'Only a controller that stays unreachable, its recovery, and the watchdog finding the program unhealthy are sent. Routine things (a brief drop that fixes itself, an address change that was followed) are only recorded in the log. These limits keep a free push plan such as ntfy.sh (250 messages a day) safe even if something misbehaves.'),
+        h('div', { class: 'form-grid' }, num('alert_daily_limit', 'Most alerts in 24 hours', 'A hard cap on everything that is sent (1 to 200). Test alerts count too.', { min: 1, max: 200 }),
+          num('alert_min_gap_minutes', 'Minutes between "down" alerts', 'If the connection keeps dropping and returning, a new "down" alert waits this long after the last one.', { min: 1, max: 1440 })),
+        h('div', null, switchEl(st.alert_on_move, (v) => { st.alert_on_move = v; }, 'Also tell me when the controller changed address and was followed automatically (not critical)')),
+        usage,
         h('h3', { style: { margin: '8px 0 0' } }, 'Email'),
         h('div', { class: 'form-grid' }, txt('alert_email', 'Send alerts to', 'One or more addresses, separated by commas.', { placeholder: 'you@example.com' }), txt('smtp_from', 'From address', 'Optional.')),
-        h('div', { class: 'form-grid' }, txt('smtp_host', 'Mail server', 'For example smtp.gmail.com, or your own relay.'), num('smtp_port', 'Port', '25, 587 (STARTTLS) or 465 (SSL).', { min: 1, max: 65535 })),
+        h('div', { class: 'form-grid' }, txt('smtp_host', 'Mail server', 'For example smtp.gmail.com (it needs port 587 and an app password, not your normal password), or your own relay.'), num('smtp_port', 'Port', '587 (STARTTLS) is right for Gmail and most providers; 465 is SSL. Port 25 is blocked by almost every home internet provider.', { min: 1, max: 65535 })),
         h('div', { class: 'form-grid' }, txt('smtp_user', 'Mail user name', 'Leave blank for a relay that needs no login.'), F('Mail password', smtpPwIn, 'Saved on this computer and never shown again.', pwId)),
         h('div', null, switchEl(st.smtp_tls, (v) => { st.smtp_tls = v; }, 'Use encryption (STARTTLS) when the server offers it')),
         h('h3', { style: { margin: '8px 0 0' } }, 'Webhook (phone notifications)'),

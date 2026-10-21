@@ -24,7 +24,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "idle_action": "off",         # what to do when nothing is scheduled: off | leave | solid
     "idle_color": "#ff5a00",
     "timezone": "",               # IANA name, e.g. America/Chicago ("" = this machine's zone)
-    "latitude": None,             # for sunrise/sunset times
+    "location_name": "",          # the place found from the address you typed (shown in Settings)
+    "latitude": None,             # worked out from that address; used only for sunrise/sunset times
     "longitude": None,
     "log_retention_days": 60,     # logs older than this are deleted automatically (31 or more)
     # ---- connection health and self-healing
@@ -32,6 +33,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "health_check_sec": 30,       # how often to check the controller is answering (while healthy)
     "alert_after_minutes": 10,    # tell me if the controller has been unreachable this long
     "alert_reminder_hours": 6,    # ... and remind me this often while it stays down
+    "alert_daily_limit": 20,      # never send more than this many alerts in 24 hours (ntfy.sh's free tier allows 250)
+    "alert_min_gap_minutes": 60,  # a new "down" alert waits this long after the previous one (flapping protection)
+    "alert_on_move": False,       # also alert when the controller changed address and was followed (not critical)
     "alert_email": "",            # where to send alerts (comma separated); needs smtp_host
     "smtp_host": "", "smtp_port": 25, "smtp_user": "", "smtp_password": "", "smtp_tls": True, "smtp_from": "",
     "alert_webhook": "",          # an http(s) URL that receives alerts as a POST (works with ntfy, Home Assistant...)
@@ -207,6 +211,10 @@ class Database:
         num("health_check_sec", 10, 600)
         num("alert_after_minutes", 1, 1440)
         num("alert_reminder_hours", 1, 168)
+        num("alert_daily_limit", 1, 200)
+        num("alert_min_gap_minutes", 1, 1440)
+        if "alert_on_move" in ch:
+            out["alert_on_move"] = bool(ch["alert_on_move"])
         num("smtp_port", 1, 65535)
         for key in ("alert_email", "smtp_host", "smtp_user", "smtp_from", "alert_webhook"):
             if key in ch:
@@ -237,6 +245,8 @@ class Database:
             if tz:
                 sch.Place(timezone=tz).tz()  # raises SpecError if unknown
             out["timezone"] = tz
+        if "location_name" in ch:
+            out["location_name"] = str(ch["location_name"] or "").strip()[:200]
         for key, lo, hi in (("latitude", -90, 90), ("longitude", -180, 180)):
             if key in ch:
                 if ch[key] in (None, ""):

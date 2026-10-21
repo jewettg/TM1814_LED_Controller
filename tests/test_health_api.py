@@ -50,9 +50,9 @@ def test_recover_endpoint_runs_a_search(client):
 def test_test_alert_needs_a_channel_and_reports_delivery(client, monkeypatch):
     assert client.post("/api/health/test-alert").status_code == 422
     client.put("/api/settings", json={"alert_webhook": "http://example/hook"})
-    monkeypatch.setattr(alerts_mod, "send", lambda cfg, s, b: (True, ["webhook"]))
+    monkeypatch.setattr(alerts_mod, "send", lambda cfg, s, b, kind="": (True, ["webhook"]))
     assert client.post("/api/health/test-alert").json() == {"sent": True, "channels": ["webhook"]}
-    monkeypatch.setattr(alerts_mod, "send", lambda cfg, s, b: (False, []))
+    monkeypatch.setattr(alerts_mod, "send", lambda cfg, s, b, kind="": (False, []))
     r = client.post("/api/health/test-alert")
     assert r.status_code == 422 and "could not be delivered" in r.json()["detail"]
 

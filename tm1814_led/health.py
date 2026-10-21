@@ -224,10 +224,11 @@ class ConnectionMonitor:
         if self.incident_id:
             self.db.update_incident(self.incident_id, summary=f"The controller moved from {old} to {new_ip}",
                                     detail={"moved_from": old, "moved_to": new_ip})
-        self._send(cfg, f"Controller moved to {new_ip}",
-                   f"The controller's IP address changed from {old} to {new_ip} (same MAC address, {cfg['controller_mac']}).\n"
-                   "The program found it again and is using the new address; nothing else is needed.\n\n"
-                   "Tip: give the controller a fixed address (a DHCP reservation in your router) so this cannot happen.")
+        if cfg["alert_on_move"]:                 # not critical (it is handled automatically), so it is opt-in
+            self._deliver(cfg, "moved", f"Controller moved to {new_ip}",
+                          f"The controller's IP address changed from {old} to {new_ip} (same MAC address, {cfg['controller_mac']}).\n"
+                          "The program found it again and is using the new address; nothing else is needed.\n\n"
+                          "Tip: give the controller a fixed address (a DHCP reservation in your router) so this cannot happen.")
         try:                                    # confirm right away rather than waiting for the next cycle
             if self.ctrl.query_state(timeout=3.0):
                 self.last_error = ""
@@ -288,15 +289,15 @@ class ConnectionMonitor:
             self.runner.request_reapply()           # it may have restarted and forgotten what it was showing
         st = self.db.get_state("alert", {})
         if st.get("sent") and st.get("incident") == self.incident_id:
-            self._send(cfg, "Recovered: the controller is reachable again",
-                       f"The controller is answering again after {took} ({how}).\n"
-                       f"Outage began: {time.strftime('%a %b %d %H:%M:%S', time.localtime(began))}.")
+            self._deliver(cfg, "recovered", "Recovered: the controller is reachable again",
+                          f"The controller is answering again after {took} ({how}).\n"
+                          f"Outage began: {time.strftime('%a %b %d %H:%M:%S', time.localtime(began))}.")
         self.db.set_state("alert", {})
         self.incident_id, self.moved_from, self.diagnosis = None, None, {}
         self.last_search, self.searches = 0.0, 0
 
     def _alerts(self, cfg: dict) -> None:
-        if self.state != "offline" or self.incident_id is None or not alerts.channels(cfg):
+        if self.state != "offline" or self.incident_id is None:
             return
         incident = self.db.get_incident(self.incident_id)
         if not incident:
@@ -315,16 +316,64 @@ class ConnectionMonitor:
                 f"  The program keeps checking, searches the network for the controller's MAC address "
                 f"({cfg['controller_mac'] or 'not learned yet'}) every minute, and will follow it if its IP address changed.\n"
                 "  Lights keep showing whatever the controller last had; schedules resume automatically when it is back.")
-        ok, _ = alerts.send(cfg, ("[reminder] " if due_reminder else "") + f"Controller not responding ({human(down)})", body)
-        if ok:
+        kind = "reminder" if due_reminder else "down"
+        if self._deliver(cfg, kind, ("[reminder] " if due_reminder else "") + f"Controller not responding ({human(down)})", body):
             self.db.set_state("alert", {"incident": self.incident_id, "sent": True, "last": now})
-            log.warning("alert sent: the controller has been down for %s", human(down))
 
-    def _send(self, cfg: dict, subject: str, body: str) -> None:
-        if alerts.channels(cfg):
-            ok, via = alerts.send(cfg, subject, body)
-            if ok:
-                log.info("alert sent (%s): %s", ", ".join(via), subject)
+    def _budget(self, cfg: dict) -> alerts.Budget:
+        return alerts.Budget(self.db.get_state("alert_budget", {}), cfg["alert_daily_limit"], cfg["alert_min_gap_minutes"] * 60)
+
+    def _note_once(self, key: str, level: int, message: str, *args) -> None:
+        """Log an alert-related line, but each distinct one at most once an hour (it may be decided on every check)."""
+        now = self.clock()
+        seen = self.db.get_state("alert_logged", {})
+        if now - seen.get(key, 0) < 3600:
+            return
+        seen[key] = now
+        self.db.set_state("alert_logged", {k: v for k, v in seen.items() if now - v < 86400})
+        log.log(level, message, *args)
+
+    def _deliver(self, cfg: dict, kind: str, subject: str, body: str) -> bool:
+        """Send one alert if the budget allows it (critical alerts only, a daily cap, flapping protection, backoff).
+        Everything that happens to an alert is written to the log with the word ALERT, so the Logs page can show it."""
+        if not alerts.channels(cfg):
+            self._note_once(f"nochannel:{kind}", logging.INFO,
+                            "ALERT not sent [%s] %s: no alert channel is set up (Settings > Self-healing and alerts)", kind, subject)
+            return False
+        now = self.clock()
+        budget = self._budget(cfg)
+        reason = budget.check(kind, now)
+        if reason:
+            self._note_once(f"held:{kind}:{reason}", logging.INFO, "ALERT held back [%s] %s: %s", kind, subject, reason)
+            return False
+        ok, via = alerts.send(cfg, subject, body, kind=kind)
+        if ok:
+            budget.record_sent(kind, now)
+            log.warning("ALERT sent via %s [%s]: %s (%d of %d alerts used in the last 24 hours)", " and ".join(via), kind, subject,
+                        budget.used(now), budget.limit)
+        else:
+            budget.record_failure(now)
+            log.warning("ALERT could not be delivered [%s] %s; trying again at %s", kind, subject,
+                        time.strftime("%H:%M", time.localtime(budget.s["next_try"])))
+        self.db.set_state("alert_budget", budget.s)
+        return ok
+
+    def send_test(self) -> List[str]:
+        """The 'send a test alert' button. Always allowed, but it counts toward the daily total."""
+        cfg = self.db.settings()
+        if not alerts.channels(cfg):
+            raise ValueError("No alert channel is set up yet: enter an email address and mail server, or a webhook URL.")
+        now = self.clock()
+        budget = self._budget(cfg)
+        ok, via = alerts.send(cfg, "Test alert", "This is a test from the LED Controller program. If you can read this, "
+                                                  "alerts are working.", kind="test")
+        if not ok:
+            raise ValueError("The test alert could not be delivered; see the Logs page for the reason.")
+        budget.record_sent("test", now)
+        self.db.set_state("alert_budget", budget.s)
+        log.warning("ALERT sent via %s [test]: Test alert (%d of %d alerts used in the last 24 hours)", " and ".join(via),
+                    budget.used(now), budget.limit)
+        return via
 
     # ------------------------------------------------------------ keeping this program's own threads alive
     def _supervise_threads(self) -> None:
@@ -364,6 +413,8 @@ class ConnectionMonitor:
             "error": self.last_error, "diagnosis": self.diagnosis, "searches": self.searches, "last_search": self.last_search or None,
             "host": cfg["controller_host"], "mac": cfg["controller_mac"], "mac_known": bool(cfg["controller_mac"]),
             "incident": incident, "alert_channels": alerts.channels(cfg),
+            "alerts": {**self._budget(cfg).summary(now), "channels": alerts.channels(cfg), "on_move": cfg["alert_on_move"],
+                       "after_minutes": cfg["alert_after_minutes"], "reminder_hours": cfg["alert_reminder_hours"]},
             "heartbeat": {"runner_sec": round(mono - self.runner.beat, 1) if self.runner else None,
                           "schedules_sec": round(mono - self.manager.beat, 1) if self.manager else None,
                           "monitor_sec": round(mono - self.beat, 1)},

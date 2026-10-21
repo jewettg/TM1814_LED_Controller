@@ -137,13 +137,13 @@ A schedule says *when* a run list plays:
 
 The editor shows the **next occurrences** as you type, so you can check it before saving. Ready-made presets cover the common cases ("every night from sunset to 11 pm", "first of every month", "Halloween week").
 
-For sunrise/sunset to be exact, enter your **latitude, longitude and time zone** in Settings (there is a *Use my location* button). Until then the program uses 7:00 am and 7:00 pm and warns you.
+**Sunrise and sunset.** Pick *Sunrise* or *Sunset* (with an optional number of minutes before or after) for the start, the end, or both. The presets cover the common cases: **Sunset to sunrise** (on all night; it runs across midnight) and **Sunrise to sunset** (on all day). You can also mix them with clock times, for example *9 pm to sunrise*. For exact times, enter **your address** and **time zone** in Settings (below). Until you do, the program uses rough defaults of 7:00 am and 7:00 pm and says so.
 
 ### Settings
 
 The controller's address and a connection test; how fast frames are sent; **master brightness**; what to do when nothing is scheduled (**turn off**, **leave as is**, or **show a color**); your time zone and location; **how long to keep logs**; **Self-healing and alerts**; and **Change password**.
 
-**Latitude and longitude.** *Use my location* asks your browser for it, but browsers only do that on secure pages: `https://...` or `http://localhost:8080` on the computer running the program. If you opened the page by its network address (for example `http://192.168.1.20:8080`) the browser refuses without even asking, and the page says so. Either open `http://localhost:8080` on that computer and try again, or just type the numbers (search for your town's latitude and longitude; a few miles either way changes sunset by well under a minute).
+**Where are your lights?** Type your street address, town or ZIP code and press **Look up**, then click the right match. The program works out the coordinates itself (you never type any) and shows you today's sunrise and sunset there so you can check it. Only the *place found* is saved. The text you type is sent once, by the program, to the free OpenStreetMap address service (never by your browser, and never on a schedule). If you would rather not use your exact address, a town or ZIP code is plenty for sunrise and sunset. **Time zone:** type to search, or press *Use this computer's time zone*.
 
 **Change password.** Type the current password, then the new one twice (at least 8 characters). You stay signed in; every other browser and terminal must sign in again. From a terminal: `tm1814-led password`.
 
@@ -154,7 +154,7 @@ Everything the program does (what started and stopped, schedule decisions, contr
 On the **Logs** page choose what to see:
 
 * **Show**: last hour, last 24 hours, last 7 days, last 30 days, everything kept, or a **custom range** (pick the start and end date and time).
-* **Which messages**: everything, warnings and errors, or errors only.
+* **Which messages**: everything, **alerts only**, warnings and errors, or errors only. Routine health checks are not logged at all; the log shows only *changes* (the connection going bad or recovering, effects starting, alerts).
 * **Search** the text of the messages, and choose the **most lines** to show (500 to 5000). If more lines match than that, the newest are shown and a note tells you to narrow the range.
 * **Download as CSV** saves what is on screen, handy for sharing or a spreadsheet.
 
@@ -263,6 +263,14 @@ Controllers are Wi-Fi devices, and sometimes they drop off the network or **come
 
 Press **Send a test alert** to check it. After that you get: **one** alert when the controller has been unreachable for 10 minutes (adjustable), a **reminder** every 6 hours while it stays down, a **"Recovered"** message when it is back, and an immediate **"Controller moved to ..."** note if it changed address and was followed. The independent watchdog alerts through the same channels if the *program* stops responding.
 
+**Only the important ones (safe for ntfy's free plan of 250 messages a day).** Alerts are limited by design, and you can see what happened in the log (search for `ALERT`, or choose *Alerts only* on the Logs page):
+
+* **Critical only.** An alert is sent only for a controller that *stays* unreachable (default 10 minutes), its recovery, and the watchdog finding the program itself unhealthy. A brief drop that fixes itself, and an address change that was followed automatically, are recorded on the Dashboard and in the log but never sent. (You can opt in to the "moved" note in Settings.)
+* **A hard daily cap.** Never more than **20 alerts in any 24 hours** by default (adjustable, 1 to 200). The last 30% is reserved for critical alerts, and test alerts count too.
+* **No flapping floods.** If the connection keeps dropping and returning, a new "down" alert waits **60 minutes** after the previous one, and its "recovered" note is skipped with it.
+* **No hammering.** If delivery fails (the phone service is down, or says it is rate-limiting you), the program waits 5, then 10, then 20 minutes, up to an hour, before trying again.
+* **Seen at a glance.** Settings and the Dashboard show *"x of 20 sent in the last 24 hours"*. Push messages carry an ntfy priority and icon (high for "down", normal for "recovered"). Over email, the same alerts apply.
+
 **A tip that prevents most of this:** in your router, give the controller a **fixed address** (a "DHCP reservation" or "static lease" for its MAC address, shown on the Dashboard). Then its address never changes.
 
 | What happens | What the program does |
@@ -317,8 +325,8 @@ The service restarts at boot and the schedules pick up again. A controller that 
 | "controller: connect failed" | Wrong address, or the controller is off or busy. Try again in 10 seconds. Only one program should be talking to it. |
 | Lights do something odd after changing settings | Press **Stop**, wait a few seconds and play again. |
 | I forgot the password | Run the installer again with a new one: `python3 -m tm1814_led --install --generate-password` (or `--password YOUR_NEW_PASSWORD`). Your data is kept, and this replaces any password you changed in the page. To change a password you do know, use **Settings → Change password** or `tm1814-led password`. |
-| *Use my location* says the browser refused | The page was opened at a network address over plain http. Open `http://localhost:8080` on the computer running the program, or type your latitude and longitude. |
-| Sunset times look wrong | Set your **latitude, longitude and time zone** in Settings. |
+| Address lookup says it could not reach the service | The program needs internet access for that one step. Try again later; sunrise and sunset use rough defaults until a place is saved. |
+| Sunset times look wrong | In Settings, enter your **address** (press *Look up* and pick the match) and choose your **time zone**; check the "Today there: sunrise ..., sunset ..." line. |
 | Something is not working and I want details | The **Logs** page (choose a range such as the last hour), `tm1814-led logs --since 1h --level warning`, or `journalctl -u tm1814-led -f` on Linux. |
 
 ---

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+* **Location by address.** Settings asks for an address, town or ZIP code instead of latitude and longitude; the program
+  looks it up (OpenStreetMap Nominatim, politely: cached, one request a second) and shows today's sunrise and sunset to
+  confirm. Sunrise/sunset schedules in either order (sunset to sunrise, sunrise to sunset, mixed with clock times) with
+  presets for both.
+* **Alerts limited to what is critical** (safe for ntfy.sh's free 250 a day): only a sustained outage, its recovery and the
+  watchdog's findings; "moved" is opt-in; a daily cap (default 20), flap damping (60 min between "down" alerts) and
+  back-off after failed deliveries, shared by the program and the watchdog. ntfy priority/tags per kind.
+* **Quieter log, with alerts in it.** Routine health checks no longer write a line each (the once-a-minute
+  "connected to ..." is gone); only changes are logged. Every alert event is logged with the word ALERT and there is an
+  "Alerts only" view on the Logs page.
+
 * **Self-healing connection to the controller.** A connection monitor checks the controller, learns its MAC address,
   and **follows it when its IP address changes** (found by a network search that skips VPNs); it records each outage
   as an incident with a plain-English diagnosis, re-sends the current effect after recovery, and sends de-duplicated

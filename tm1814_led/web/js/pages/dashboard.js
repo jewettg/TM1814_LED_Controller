@@ -93,7 +93,7 @@ export async function dashboard(ctx) {
       h('dt', null, 'Controller ID'), h('dd', null, hl.mac ? hl.mac : 'not learned yet (it is learned the first time the controller answers)')];
     if (hl.failures) dl.push(h('dt', null, 'Not answering'), h('dd', null, hl.failures + ' check' + (hl.failures === 1 ? '' : 's') + ' in a row' + (hl.error ? ': ' + hl.error : '')));
     if (hl.diagnosis && hl.diagnosis.summary) dl.push(h('dt', null, 'Likely reason'), h('dd', null, hl.diagnosis.summary));
-    dl.push(h('dt', null, 'Alerts'), h('dd', null, hl.alert_channels.length ? hl.alert_channels.join(' and ') : h('span', null, 'none set up. ', h('a', { href: '#/settings' }, 'Set them up'))));
+    dl.push(h('dt', null, 'Alerts'), h('dd', null, hl.alert_channels.length ? hl.alert_channels.join(' and ') + ' (' + hl.alerts.sent_24h + ' of ' + hl.alerts.limit + ' sent in the last 24 hours)' : h('span', null, 'none set up. ', h('a', { href: '#/settings' }, 'Set them up'))));
     const incidents = hl.incidents.length
       ? h('div', { class: 'table-wrap' }, h('table', null, h('thead', null, h('tr', null, h('th', null, 'Started'), h('th', null, 'Lasted'), h('th', null, 'What happened'))),
           h('tbody', null, hl.incidents.slice(0, 6).map((i) => h('tr', null,

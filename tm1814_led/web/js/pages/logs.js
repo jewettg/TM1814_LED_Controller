@@ -4,7 +4,7 @@ import { h, render, pageHead, loading, fmtStamp, switchEl, emptyState, nextId } 
 
 const RANGES = [['1h', 'Last hour', 3600], ['24h', 'Last 24 hours', 86400], ['7d', 'Last 7 days', 7 * 86400],
   ['30d', 'Last 30 days', 30 * 86400], ['all', 'Everything kept', 0], ['custom', 'Custom range...', 0]];
-const LEVELS = [['', 'All messages'], ['WARNING', 'Warnings and errors'], ['ERROR', 'Errors only']];
+const LEVELS = [['', 'All messages'], ['alerts', 'Alerts only'], ['WARNING', 'Warnings and errors'], ['ERROR', 'Errors only']];
 const LIMITS = [500, 1000, 2000, 5000];
 
 function localInputValue(date) {   // value for <input type="datetime-local">, in this browser's time
@@ -45,8 +45,11 @@ export async function logs(ctx) {
     const p = new URLSearchParams({ limit: String(st.limit) });
     if (since != null) p.set('since', String(since));
     if (until != null) p.set('until', String(until));
-    if (st.level) p.set('level', st.level);
-    if (st.q) p.set('q', st.q);
+    if (st.level === 'alerts') p.set('q', 'ALERT');          // alert activity is logged with the word ALERT
+    else {
+      if (st.level) p.set('level', st.level);
+      if (st.q) p.set('q', st.q);
+    }
     return p;
   }
 
@@ -59,7 +62,8 @@ export async function logs(ctx) {
 
   function draw() {
     if (!data) return;
-    const rows = data.entries.slice().reverse();   // newest first
+    let rows = data.entries.slice().reverse();     // newest first
+    if (st.level === 'alerts' && st.q) rows = rows.filter((r) => r.msg.toLowerCase().includes(st.q.toLowerCase()));
     const kept = data.oldest ? 'Oldest line kept: ' + fmtStamp(data.oldest) + '. ' : '';
     info.textContent = 'Showing ' + rows.length + ' of ' + data.total + ' matching line' + (data.total === 1 ? '' : 's') +
       ' (newest first). ' + kept + 'Logs are kept for ' + data.retention_days + ' days; change that in Settings.';

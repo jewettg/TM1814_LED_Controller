@@ -116,7 +116,7 @@ class Controller:
         self._in_scribble = False
         self._shown = None
         self.last_error = ""
-        log.info("connected to %s:%s", self.host, self.port)
+        log.debug("connected to %s:%s", self.host, self.port)      # routine (the health check opens one); not logged
 
     def close(self) -> None:
         with self._lock:
@@ -180,7 +180,7 @@ class Controller:
             while select.select([self._sock], [], [], 0)[0]:
                 chunk = self._sock.recv(4096)
                 if not chunk:                       # the controller closed the connection
-                    log.info("the controller closed the idle connection; reconnecting")
+                    log.debug("the controller closed the idle connection; reconnecting")
                     self.close()
                     return
         except OSError:

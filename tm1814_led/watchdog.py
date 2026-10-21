@@ -27,7 +27,8 @@ from .config import DEFAULT_PORT, default_data_dir
 RESTART_AFTER_CHECKS = 2          # consecutive bad checks before the service is restarted (about 3-6 minutes)
 MAX_RESTARTS_PER_HOUR = 3
 REMINDER_SEC = 6 * 3600
-SETTING_KEYS = ("alert_email", "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_tls", "smtp_from", "alert_webhook")
+SETTING_KEYS = ("alert_email", "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_tls", "smtp_from", "alert_webhook",
+                "alert_daily_limit", "alert_min_gap_minutes")
 
 
 def live_url() -> str:
@@ -113,12 +114,24 @@ def run_once(*, url: Optional[str] = None, state_path: Optional[Path] = None, db
     st = _load(state_path)
     actions = []
     cfg = read_alert_settings(db_path)
+    budget = alerts.Budget(st.setdefault("budget", {}), int(cfg.get("alert_daily_limit", 20)),
+                           float(cfg.get("alert_min_gap_minutes", 60)) * 60)
+
+    def deliver(kind: str, subject: str, body: str) -> bool:
+        """One alert through the budget: critical kinds only, a daily cap, a minimum gap, backoff after a failure."""
+        if budget.check(kind, t):
+            return False
+        ok, _ = send(cfg, subject, body, kind=kind)
+        budget.record_sent(kind, t) if ok else budget.record_failure(t)
+        return ok
+
     if not problem:
         if st.get("alerted"):
-            ok, _ = send(cfg, "Recovered: the LED Controller program is running again",
+            ok = deliver("watchdog_recovered", "Recovered: the LED Controller program is running again",
                          "The watchdog can reach the program again and its workers are making progress.")
             actions.append("sent a recovery message" if ok else "could not send a recovery message")
-        _save(state_path, {"bad": 0, "since": None, "alerted": False, "last_alert": 0, "restarts": st.get("restarts", [])})
+        _save(state_path, {"bad": 0, "since": None, "alerted": False, "last_alert": 0, "restarts": st.get("restarts", []),
+                           "budget": budget.s})
         return {"ok": True, "problem": "", "actions": actions}
 
     st["bad"] = st.get("bad", 0) + 1
@@ -134,7 +147,7 @@ def run_once(*, url: Optional[str] = None, state_path: Optional[Path] = None, db
         due = (not st.get("alerted")) or (t - st.get("last_alert", 0) >= REMINDER_SEC)
         if due:
             how = "; ".join(actions) or "the restart limit for this hour was reached"
-            ok, _ = send(cfg, ("[reminder] " if st.get("alerted") else "") + "The LED Controller program is not healthy",
+            ok = deliver("watchdog", ("[reminder] " if st.get("alerted") else "") + "The LED Controller program is not healthy",
                          f"The independent watchdog found a problem: {problem}.\n\nDown for about {int((t - st['since']) / 60)} "
                          f"minutes. What it did: {how}.\n\n(This check runs from the system scheduler, so it works even "
                          "when the program itself is dead.)")

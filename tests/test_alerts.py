@@ -96,3 +96,48 @@ def test_webhook_receives_the_message_with_a_title_header():
 
 def test_an_unreachable_webhook_is_not_an_error():
     assert alerts.send({"alert_webhook": "http://127.0.0.1:1/x"}, "s", "b") == (False, [])
+
+
+def test_ntfy_gets_a_priority_and_a_tag_per_kind_and_a_bounded_body():
+    Hook.got = []
+    seen = []
+    orig = Hook.do_POST
+    def capture(self):
+        seen.append({k: self.headers.get(k) for k in ("Title", "Priority", "Tags")})
+        n = int(self.headers.get("Content-Length", 0)); self.rfile.read(n); self.send_response(200); self.end_headers()
+    Hook.do_POST = capture
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Hook)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        cfg = {"alert_webhook": f"http://127.0.0.1:{srv.server_port}/t"}
+        alerts.send(cfg, "Controller not responding (10 min)", "x" * 10000, kind="down")
+        alerts.send(cfg, "Recovered", "ok", kind="recovered")
+        alerts.send(cfg, "plain", "ok")
+        assert seen[0]["Priority"] == "high" and seen[0]["Tags"] == "warning"
+        assert seen[1]["Priority"] == "default" and seen[1]["Tags"] == "white_check_mark"
+        assert seen[2]["Priority"] is None                                      # no kind: no ntfy extras
+    finally:
+        srv.shutdown(); Hook.do_POST = orig
+
+
+def test_a_push_service_that_says_slow_down_is_reported_not_retried(caplog):
+    class Busy(http.server.BaseHTTPRequestHandler):
+        hits = 0
+        def do_POST(self):
+            Busy.hits += 1
+            self.send_response(429); self.end_headers()
+        def log_message(self, *a):
+            pass
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Busy)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with caplog.at_level("WARNING"):
+            assert alerts.send({"alert_webhook": f"http://127.0.0.1:{srv.server_port}/t"}, "s", "b", kind="down") == (False, [])
+        assert Busy.hits == 1 and "message limit has been reached" in caplog.text
+    finally:
+        srv.shutdown()
+
+
+def test_critical_kinds_are_exactly_the_ones_that_matter():
+    assert alerts.CRITICAL == {"down", "recovered", "watchdog", "watchdog_recovered"}
+    assert set(alerts.LOOK) >= alerts.CRITICAL | {"reminder", "moved", "test"}

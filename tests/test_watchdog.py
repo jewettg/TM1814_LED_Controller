@@ -31,7 +31,7 @@ class Rig:
         self.restarts.append(self.t[0])
         return self.restart_ok, "launchctl kickstart -k gui/501/x"
 
-    def send(self, cfg, subject, body):
+    def send(self, cfg, subject, body, kind=""):
         self.sent.append((cfg.get("alert_webhook"), subject, body))
         return True, ["webhook"]
 
@@ -174,3 +174,23 @@ def test_restart_commands_per_operating_system(monkeypatch):
     W.restart_service(runner, "windows")
     assert calls[-2][:3] == ["schtasks", "/End", "/TN"] and calls[-1][:3] == ["schtasks", "/Run", "/TN"]
     assert W.restart_service(runner, "plan9") == (False, "no service manager to restart it with")
+
+
+def test_the_watchdog_alerts_at_most_the_daily_limit_and_not_every_flap(tmp_path):
+    rig = Rig(tmp_path)
+    db = Database(str(rig.db_path)); db.update_settings({"alert_daily_limit": 4, "alert_min_gap_minutes": 60}); db.close()
+    for _ in range(30):                                       # thirty separate outages, each fixed after a restart
+        rig.live = DOWN
+        rig.run(180); rig.run(180)
+        rig.live = {"ok": True, "heartbeat": {}}
+        rig.run(180)
+    assert 1 <= len(rig.sent) <= 4                            # the limit holds
+    downs = [s for s in rig.sent if "not healthy" in s[1]]
+    assert len(downs) <= 4
+
+
+def test_the_watchdog_keeps_its_budget_in_its_own_state_file(rig):
+    rig.live = DOWN
+    rig.run(); rig.run()
+    saved = json.loads(rig.state.read_text())
+    assert [k for _, k in saved["budget"]["sent"]] == ["watchdog"] and saved["budget"]["last_down"] > 0

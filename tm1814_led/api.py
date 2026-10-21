@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from . import effects as fx
+from . import geocode
 from . import protocol as P
 from . import scheduler as sch
 from .auth import COOKIE, MIN_PASSWORD_LENGTH, Auth, fingerprint, hash_password
@@ -112,6 +113,10 @@ class LoginIn(BaseModel):
 class PasswordIn(BaseModel):
     current: str = ""
     new: str = ""
+
+
+class LocationIn(BaseModel):
+    query: str
 
 
 class PowerIn(BaseModel):
@@ -353,15 +358,29 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
 
     @app.post("/api/health/test-alert")
     def health_test_alert():
-        from . import alerts as alerts_mod
+        return {"sent": True, "channels": monitor.send_test()}
+
+    # ---------------------------------------------------------------- location (address -> sunrise and sunset)
+    @app.post("/api/location/search")
+    def location_search(body: LocationIn):
+        """Look an address, town or ZIP code up; returns candidate places to choose from (never saved by this call)."""
+        return {"results": geocode.search(body.query)}
+
+    @app.get("/api/location/sun")
+    def location_sun(latitude: Optional[float] = None, longitude: Optional[float] = None, timezone: Optional[str] = None):
+        """Today's sunrise and sunset for the saved place (or for the place given, to preview before saving)."""
         cfg = db.settings()
-        if not alerts_mod.channels(cfg):
-            raise ValueError("No alert channel is set up yet: enter an email address and mail server, or a webhook URL.")
-        ok, via = alerts_mod.send(cfg, "Test alert", "This is a test from the LED Controller program. If you can read this, "
-                                                      "alerts are working.")
-        if not ok:
-            raise ValueError("The test alert could not be delivered; see the Logs page for the reason.")
-        return {"sent": True, "channels": via}
+        place = sch.Place(cfg["timezone"] if timezone is None else timezone,
+                          cfg["latitude"] if latitude is None else latitude,
+                          cfg["longitude"] if longitude is None else longitude)
+        if not place.has_location:
+            return {"configured": False}
+        tz = place.tz()
+        day = dt.datetime.now(tz).date()
+        rise, est1 = sch.sun_time(day, "sunrise", place)
+        sset, est2 = sch.sun_time(day, "sunset", place)
+        return {"configured": True, "date": day.isoformat(), "sunrise": rise.isoformat(), "sunset": sset.isoformat(),
+                "estimated": est1 or est2, "timezone": str(getattr(tz, "key", tz)), "name": cfg["location_name"]}
 
     @app.get("/api/controller/state")
     def controller_state():
