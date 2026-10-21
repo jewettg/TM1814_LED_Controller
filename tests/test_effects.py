@@ -240,3 +240,87 @@ def test_effects_saved_with_minutes_are_converted_to_hours():
 def test_the_stepping_preview_explains_that_it_is_fast_forwarded():
     schema = {k["kind"]: k for k in fx.kinds_schema()}
     assert "fast-forwarded" in schema["nth_step"]["preview_note"] and schema["nth"]["preview_note"] == ""
+
+
+# ---- Fall Colors
+BLACK = (0, 0, 0)
+
+
+def runs(frame):
+    out, cur, n = [], frame[0], 1
+    for px in frame[1:]:
+        if px == cur:
+            n += 1
+        else:
+            out.append((cur, n)); cur, n = px, 1
+    out.append((cur, n))
+    return out
+
+
+def test_fall_colors_fills_every_led_with_patches_of_two_to_five():
+    e = fx.build("fall_colors", {}, N, seed=3)
+    f = e.frame(0)
+    assert len(f) == N
+    patches = runs(f)
+    assert all(2 <= length <= 5 for _, length in patches[:-1]) and 1 <= patches[-1][1] <= 5     # only the last may be cut short
+    assert sum(length for _, length in patches) == N
+
+
+def test_fall_colors_uses_the_palette_plus_black_and_never_repeats_a_neighbor():
+    e = fx.build("fall_colors", {}, 1000, seed=1)
+    palette = {fx.REGISTRY["fall_colors"].clean({})["colors"][i] for i in range(8)}
+    from tm1814_led.protocol import parse_hex
+    allowed = {parse_hex(c) for c in palette} | {BLACK}
+    patches = runs(e.frame(0))
+    assert {c for c, _ in patches} <= allowed and BLACK in {c for c, _ in patches}
+    assert all(a[0] != b[0] for a, b in zip(patches, patches[1:]))                              # neighbors always differ
+
+
+def test_fall_colors_black_amount_is_adjustable():
+    def black_share(percent):
+        f = fx.build("fall_colors", {"black_percent": percent}, 2000, seed=5).frame(0)
+        return sum(1 for p in f if p == BLACK) / len(f)
+    assert black_share(0) == 0.0
+    assert 0.20 < black_share(25) < 0.30                          # the setting means what it says: about 25% of the strip
+    assert 0.44 < black_share(50) <= 0.52                         # half is the most possible (no two black patches touch)
+    assert fx.build('fall_colors', {'black_percent': 90}, 100).p['black_percent'] == 50
+
+
+def test_fall_colors_patch_length_is_adjustable_and_a_reversed_range_still_works():
+    f = fx.build("fall_colors", {"min_run": 7, "max_run": 9}, 400, seed=2).frame(0)
+    assert all(7 <= length <= 9 for _, length in runs(f)[:-1])
+    swapped = fx.build("fall_colors", {"min_run": 9, "max_run": 7}, 400, seed=2).frame(0)
+    assert all(7 <= length <= 9 for _, length in runs(swapped)[:-1])
+
+
+def test_fall_colors_holds_a_pattern_for_the_set_time_then_replaces_it():
+    e = fx.build("fall_colors", {"change_seconds": 60}, N, seed=4)
+    first = e.frame(0)
+    assert e.frame(30) == first and e.frame(59.9) == first                                     # held for the whole minute
+    second = e.frame(60)
+    assert second != first and e.frame(119) == second                                          # then a new random pattern
+    assert e.frame(120) not in (first, second)
+    quick = fx.build("fall_colors", {"change_seconds": 5}, N, seed=4)
+    assert quick.frame(4.9) == quick.frame(0) and quick.frame(5) != quick.frame(0)             # adjustable
+
+
+def test_fall_colors_colors_can_be_added_and_removed():
+    from tm1814_led.protocol import parse_hex
+    two = fx.build("fall_colors", {"colors": ["#ff0000", "#00ff00"], "black_percent": 0}, 300, seed=1).frame(0)
+    assert {p for p in two} == {parse_hex("#ff0000"), parse_hex("#00ff00")}
+    one = fx.build("fall_colors", {"colors": ["#ff7518"], "black_percent": 30}, 300, seed=1).frame(0)
+    assert {p for p in one} == {parse_hex("#ff7518"), BLACK}                                  # a single color plus black spacing
+    sixteen = ["#%02x0000" % (i * 15) for i in range(1, 17)]
+    assert len(fx.build("fall_colors", {"colors": sixteen}, N).p["colors"]) == 16
+    for bad in ([], ["#ff0000"] * 17):
+        with pytest.raises(fx.ParamError):
+            fx.build("fall_colors", {"colors": bad}, N)
+    with_black = fx.build("fall_colors", {"colors": ["#ff0000", "#000000"], "black_percent": 0}, 300, seed=1).frame(0)
+    assert BLACK in set(with_black)                                                            # black may also be in the list itself
+
+
+def test_fall_colors_is_repeatable_per_seed_animated_and_preview_is_fast():
+    a = fx.render_preview("fall_colors", {}, N, 12, 5, seed=2)
+    assert a == fx.render_preview("fall_colors", {}, N, 12, 5, seed=2) and len(set(a)) == 3    # a new pattern every 4 s in the preview
+    assert fx.REGISTRY["fall_colors"].family() == "animated" and "sped up" in fx.REGISTRY["fall_colors"].preview_note
+    assert len(fx.build("fall_colors", {}, N, seed=9).p["colors"]) == 8

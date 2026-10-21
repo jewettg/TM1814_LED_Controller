@@ -49,12 +49,29 @@ def test_recover_endpoint_runs_a_search(client):
 
 def test_test_alert_needs_a_channel_and_reports_delivery(client, monkeypatch):
     assert client.post("/api/health/test-alert").status_code == 422
-    client.put("/api/settings", json={"alert_webhook": "http://example/hook"})
-    monkeypatch.setattr(alerts_mod, "send", lambda cfg, s, b, kind="": (True, ["webhook"]))
-    assert client.post("/api/health/test-alert").json() == {"sent": True, "channels": ["webhook"]}
-    monkeypatch.setattr(alerts_mod, "send", lambda cfg, s, b, kind="": (False, []))
+    client.put("/api/settings", json={"alert_webhook": "http://example.invalid/hook"})
+    monkeypatch.setattr(alerts_mod, "send_detailed", lambda cfg, s, b, kind="", only=None: (["webhook"], {}))
+    assert client.post("/api/health/test-alert").json() == {"sent": True, "channels": ["webhook"], "failed": {}}
+    monkeypatch.setattr(alerts_mod, "send_detailed", lambda cfg, s, b, kind="", only=None: ([], {"webhook": "HTTP Error 404"}))
     r = client.post("/api/health/test-alert")
-    assert r.status_code == 422 and "could not be delivered" in r.json()["detail"]
+    assert r.status_code == 422 and "could not be delivered" in r.json()["detail"] and "HTTP Error 404" in r.json()["detail"]
+
+
+def test_test_alert_per_channel_and_partial_success(client, monkeypatch):
+    client.put("/api/settings", json={"alert_webhook": "http://example.invalid/hook", "alert_email": "me@example.com", "smtp_host": "mail"})
+    calls = []
+    def fake(cfg, s, b, kind="", only=None):
+        calls.append(only)
+        bad = {"email": "the mail server refused the login (535): not accepted"}
+        return (["webhook"], bad) if only is None else ((["webhook"], {}) if only == "webhook" else ([], bad))
+    monkeypatch.setattr(alerts_mod, "send_detailed", fake)
+    both = client.post("/api/health/test-alert", json={}).json()
+    assert both["sent"] and both["channels"] == ["webhook"] and "refused the login" in both["failed"]["email"]
+    assert client.post("/api/health/test-alert", json={"channel": "webhook"}).json()["failed"] == {}
+    r = client.post("/api/health/test-alert", json={"channel": "email"})
+    assert r.status_code == 422 and "refused the login" in r.json()["detail"]
+    assert calls == [None, "webhook", "email"]
+    assert client.post("/api/health/test-alert", json={"channel": "sms"}).status_code == 422
 
 
 def test_the_smtp_password_is_write_only(client):

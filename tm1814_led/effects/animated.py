@@ -353,3 +353,61 @@ class SteppingNth(Effect):
     def frame(self, t: float) -> List[Pixel]:
         from .fixed import nth_frame
         return nth_frame(self, self.spacing(t))
+
+
+FALL_PALETTE = ["#cc5500", "#ff7518", "#ffb000", "#e6a100", "#b0121b", "#8b1a1a", "#b7410e", "#7b3f00"]
+BLACK = (0, 0, 0)
+
+
+@register
+class FallColors(Effect):
+    kind = "fall_colors"
+    label = "Fall colors"
+    category = "Animated"
+    description = ("Random patches of 2 to 5 LEDs in autumn colors (burnt orange, pumpkin, amber, crimson, rust, brown), with "
+                   "black patches for spacing, filling the whole strip. After the time you set, a brand new random pattern "
+                   "replaces it. Needs this program running to change the pattern.")
+    preview_note = ("Preview only: it is sped up to show a new pattern every 4 seconds. On the lights the pattern stays "
+                    "for the time set under 'New pattern every' (default: one minute).")
+    params = (
+        Param("colors", "Fall colors", "colors", FALL_PALETTE, min=1, max=16),
+        Param("black_percent", "Black spacing", "int", 25, min=0, max=50, unit="%",
+              help="How many of the patches are black (off), so the colors have breathing room. 0 = none. "
+                   "The share of the strip that is black; two black patches never touch, so half is the most possible."),
+        Param("min_run", "Shortest patch", "int", 2, min=1, max=30, unit="LEDs"),
+        Param("max_run", "Longest patch", "int", 5, min=1, max=30, unit="LEDs"),
+        Param("change_seconds", "New pattern every", "int", 60, min=5, max=86400, unit="seconds",
+              help="How long each random pattern stays before a new one replaces it (60 = one minute)."),
+    )
+
+    def start(self) -> None:
+        self._slot = None
+        self._pattern: List[Pixel] = []
+
+    def _make_pattern(self) -> List[Pixel]:
+        lo, hi = sorted((self.p["min_run"], self.p["max_run"]))
+        palette = self.colors("colors")
+        share = self.p["black_percent"]
+        # Black never follows black, so to make black this SHARE of the strip, a colored patch is followed by a black one
+        # with probability share / (100 - share) (50% -> every other patch).
+        black_chance = min(1.0, share / (100.0 - share)) * 100.0 if share < 100 else 100.0
+        out: List[Pixel] = []
+        prev = None
+        while len(out) < self.n:
+            run = self.rng.randint(lo, hi)
+            if prev != BLACK and self.rng.random() * 100 < black_chance:
+                color = BLACK
+            else:
+                choices = [c for c in palette if c != prev] or palette       # never the same color twice in a row
+                color = self.rng.choice(choices)
+            prev = color
+            out.extend([color] * run)
+        return out[:self.n]
+
+    def frame(self, t: float) -> List[Pixel]:
+        step = 4.0 if self.preview else float(self.p["change_seconds"])
+        slot = int(t // step)
+        if slot != self._slot:
+            self._slot = slot
+            self._pattern = self._make_pattern()
+        return list(self._pattern)

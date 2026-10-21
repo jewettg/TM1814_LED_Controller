@@ -89,7 +89,7 @@ export async function settings(ctx) {
     } catch (e) { render(results, h('div', { class: 'inline-error', role: 'alert' }, e.message)); }
   }) }, 'Look up');
   addrIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookupBtn.click(); } });
-  const clearPlace = h('button', { type: 'button', class: 'small', onclick: () => { st.latitude = null; st.longitude = null; st.location_name = ''; render(results); showPlace(); showSun(); } }, 'Clear place');
+  const clearPlace = h('button', { type: 'button', onclick: () => { st.latitude = null; st.longitude = null; st.location_name = ''; render(results); showPlace(); showSun(); } }, 'Clear place');
   showPlace(); showSun();
 
   // ---- change password
@@ -125,12 +125,21 @@ export async function settings(ctx) {
   const alertMsg = h('div', { class: 'inline-error', role: 'status' });
   const usage = h('p', { class: 'help', 'aria-live': 'polite' });
   api.get('/health').then((hl) => { usage.textContent = 'Alerts sent in the last 24 hours: ' + hl.alerts.sent_24h + ' of the ' + hl.alerts.limit + ' allowed.' + (hl.alerts.retry_at ? ' A delivery failed recently; the next try is at ' + new Date(hl.alerts.retry_at * 1000).toLocaleTimeString() + '.' : ''); }).catch(() => {});
-  const testAlertBtn = h('button', { type: 'button', onclick: act(async () => {
+  async function sendTest(channel) {
     alertMsg.textContent = ''; alertMsg.style.color = '';
     await save(true);
-    try { const r = await api.post('/health/test-alert'); alertMsg.style.color = 'var(--success)'; alertMsg.textContent = 'Sent through ' + r.channels.join(' and ') + '. Check your inbox or phone.'; }
-    catch (e) { alertMsg.textContent = e.message; }
-  }) }, 'Send a test alert');
+    try {
+      const r = await api.post('/health/test-alert', channel ? { channel } : {});
+      const bad = Object.entries(r.failed || {});
+      alertMsg.style.color = bad.length ? 'var(--warn)' : 'var(--success)';
+      alertMsg.textContent = 'Sent through ' + r.channels.join(' and ') + '. Check your ' + (r.channels.includes('email') ? 'inbox' : 'phone') + '.' +
+        bad.map(([n, why]) => ' ' + n + ' did NOT work: ' + why).join('');
+    } catch (e) { alertMsg.textContent = e.message; }
+    api.get('/health').then((hl) => { usage.textContent = 'Alerts sent in the last 24 hours: ' + hl.alerts.sent_24h + ' of the ' + hl.alerts.limit + ' allowed.'; }).catch(() => {});
+  }
+  const testAlertBtn = h('button', { type: 'button', onclick: act(() => sendTest(null)) }, 'Send a test alert (all channels)');
+  const testEmailBtn = h('button', { type: 'button', onclick: act(() => sendTest('email')) }, 'Test email only');
+  const testPushBtn = h('button', { type: 'button', onclick: act(() => sendTest('webhook')) }, 'Test phone push only');
 
   async function save(quiet) {
     showErr(null);
@@ -175,8 +184,8 @@ export async function settings(ctx) {
         h('div', { class: 'form-grid' }, F('Time zone', tz, 'Start typing to search, for example America/Chicago. Leave blank to use the computer\'s own zone.', tzId), tzList),
         h('div', { class: 'row' }, useTz),
         F('Where are your lights?', addrIn, 'Used only to work out sunrise and sunset for schedules. The address is looked up once (through OpenStreetMap) and only the place found is saved.', addrId),
-        h('div', { class: 'row' }, lookupBtn, clearPlace), results, placeNow, sunNow),
-      h('p', { class: 'help', style: { marginTop: '-8px' } }, 'Address lookup by OpenStreetMap Nominatim (data © OpenStreetMap contributors).'),
+        h('div', { class: 'row' }, lookupBtn, clearPlace), results, placeNow, sunNow,
+        h('p', { class: 'help' }, 'Address lookup by OpenStreetMap Nominatim (data © OpenStreetMap contributors).')),
       h('section', { class: 'card stack' }, h('h2', null, 'Self-healing and alerts'),
         h('p', { class: 'help' }, 'The program checks that the controller is answering and, if its network address changes (for example after a router restart), finds it again by its ID and follows it automatically. Every problem is recorded on the Dashboard. To be told about a problem, set up an email or a webhook below.'),
         h('div', { class: 'form-grid' }, F('Controller ID (MAC address)', macIn, 'What identifies your controller even if its address changes. Learned automatically; clear it only if you replaced the controller.', macId),
@@ -192,11 +201,11 @@ export async function settings(ctx) {
         h('h3', { style: { margin: '8px 0 0' } }, 'Email'),
         h('div', { class: 'form-grid' }, txt('alert_email', 'Send alerts to', 'One or more addresses, separated by commas.', { placeholder: 'you@example.com' }), txt('smtp_from', 'From address', 'Optional.')),
         h('div', { class: 'form-grid' }, txt('smtp_host', 'Mail server', 'For example smtp.gmail.com (it needs port 587 and an app password, not your normal password), or your own relay.'), num('smtp_port', 'Port', '587 (STARTTLS) is right for Gmail and most providers; 465 is SSL. Port 25 is blocked by almost every home internet provider.', { min: 1, max: 65535 })),
-        h('div', { class: 'form-grid' }, txt('smtp_user', 'Mail user name', 'Leave blank for a relay that needs no login.'), F('Mail password', smtpPwIn, 'Saved on this computer and never shown again.', pwId)),
+        h('div', { class: 'form-grid' }, txt('smtp_user', 'Mail user name', 'Leave blank for a relay that needs no login.'), F('Mail password', smtpPwIn, 'Saved on this computer and never shown again. Gmail needs a 16-character app password here (Google account > Security > 2-Step Verification > App passwords), not your normal password.', pwId)),
         h('div', null, switchEl(st.smtp_tls, (v) => { st.smtp_tls = v; }, 'Use encryption (STARTTLS) when the server offers it')),
         h('h3', { style: { margin: '8px 0 0' } }, 'Webhook (phone notifications)'),
         txt('alert_webhook', 'Webhook address', 'An http(s) address that receives the alert as a POST, for example https://ntfy.sh/your-secret-topic (then install the free ntfy app on your phone).', { placeholder: 'https://ntfy.sh/your-secret-topic' }),
-        h('div', { class: 'row' }, testAlertBtn), alertMsg),
+        h('div', { class: 'row' }, testAlertBtn, testEmailBtn, testPushBtn), alertMsg),
       h('div', { class: 'row' }, h('button', { class: 'primary', type: 'button', onclick: act(async () => { try { await save(false); } catch (e) { /* shown inline */ } }) }, 'Save settings')),
       h('section', { class: 'card stack' }, h('h2', null, 'Password'),
         h('p', { class: 'help' }, 'Change the password for this web page and the command line. You stay signed in here; every other browser and terminal must sign in again with the new one.'),

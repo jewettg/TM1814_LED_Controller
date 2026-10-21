@@ -59,6 +59,8 @@ def _effects() -> List[Dict[str, Any]]:
             f"Fixed night light: the white LED on {desc}, nothing animated.")
     add("night-hourly", "Night (Hourly 4-6)", "nth_step", {},
         "Every 4th pixel for an hour, then every 5th, then every 6th, then back to 4th (changes on the hour).")
+    add("fall-colors", "Fall Colors", "fall_colors", {},
+        "Random 2 to 5 LED patches of autumn colors with black spacing; a new random pattern every minute.")
     add("custom-alternate", "Custom example - Red/blue alternate", "frames", {},
         "Two-frame animation made in the frame editor; open it to see how it works.")
     return e

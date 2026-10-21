@@ -19,7 +19,8 @@ const previewCache = new Map(); // effect id + updated -> {frames, fps}
 export async function catalog(ctx) {
   const app = ctx.app;
   render(app, loading());
-  const [effects, kinds, meta] = await Promise.all([api.get('/effects'), getKinds(), getMeta()]);
+  const [effects, kinds, meta, sections] = await Promise.all([api.get('/effects'), getKinds(), getMeta(), api.get('/sections')]);
+  const openSections = new Set(); // sections are collapsed until opened
   const kindMap = Object.fromEntries(kinds.map((k) => [k.kind, k]));
   queue.length = 0;
   ctx.onLeave(() => { queue.length = 0; });
@@ -68,6 +69,7 @@ export async function catalog(ctx) {
           const c = await api.post('/effects/' + e.id + '/duplicate', { name });
           toast('Created "' + c.name + '"', 'success'); reload();
         }) }, 'Duplicate'),
+        h('button', { class: 'small', type: 'button', onclick: () => moveEffect(e) }, 'Move'),
         h('button', { class: 'small', type: 'button', onclick: act(async () => {
           const name = await promptDialog('Rename effect', 'New name', e.name, 'Rename');
           if (!name || name === e.name) return;
@@ -119,17 +121,65 @@ export async function catalog(ctx) {
     count.textContent = shown.length + ' of ' + effects.length + ' effects';
     if (!effects.length) { render(grid, emptyState('No effects yet.', h('button', { class: 'primary', type: 'button', onclick: newEffect }, 'New effect'))); return; }
     if (!shown.length) { render(grid, emptyState('No effects match your search or filter.')); return; }
-    const groups = [['Controller-native', shown.filter((e) => (kindMap[e.kind] || {}).family === 'native')],
-      ['Fixed', shown.filter((e) => (kindMap[e.kind] || {}).family === 'fixed')],
-      ['Animated', shown.filter((e) => ((kindMap[e.kind] || {}).family || 'animated') === 'animated')]];
-    render(grid, groups.filter(([, l]) => l.length).map(([name, list]) => h('section', null,
-      h('h2', { class: 'section-title' }, name + ' (' + list.length + ')'),
-      h('p', { class: 'help', style: { marginTop: '-8px' } }, ({
-        'Controller-native': 'These run on the controller itself and keep going even if this program stops. Built-in animations cannot be previewed here.',
-        'Fixed': 'Still pictures: painted once and left that way. Nothing moves, and they stay lit even if this program stops.',
-        'Animated': 'These are drawn by this program at about 5 frames per second and need it running. Previews are shown below.',
-      })[name]),
-      h('div', { class: 'card-grid' }, list.map(card)))));
+    const builtIn = [['Controller-native', 'native', 'These run on the controller itself and keep going even if this program stops. Built-in animations cannot be previewed here.'],
+      ['Fixed', 'fixed', 'Still pictures: painted once and left that way. Nothing moves, and they stay lit even if this program stops.'],
+      ['Animated', 'animated', 'These are drawn by this program at about 5 frames per second and need it running. Previews are shown below.']];
+    const fam = (e) => (kindMap[e.kind] || {}).family || 'animated';
+    const groups = [...builtIn.map(([name, family, help]) => ({ name, help, custom: false, list: shown.filter((e) => !e.section && fam(e) === family) })),
+      ...sections.map((name) => ({ name, help: '', custom: true, list: shown.filter((e) => e.section === name) }))];
+    const searching = !!(search || filter !== 'all');
+    render(grid, groups.filter((g) => g.list.length || (g.custom && !searching)).map((g) => {
+      const key = g.custom ? 'custom:' + g.name : g.name;
+      const total = effects.filter((e) => g.custom ? e.section === g.name : (!e.section && fam(e) === builtIn.find((b) => b[0] === g.name)[1])).length;
+      const det = h('details', { class: 'effect-section' },
+        h('summary', { class: 'section-title' }, g.name + ' (' + (searching ? g.list.length + ' of ' + total : g.list.length) + ')'),
+        g.custom ? h('div', { class: 'row tight', style: { marginBottom: '8px' } },
+          h('button', { class: 'small', type: 'button', onclick: act(() => renameSection(g.name)) }, 'Rename section'),
+          h('button', { class: 'small danger', type: 'button', onclick: act(() => removeSection(g.name)) }, 'Delete section')) : null,
+        g.help ? h('p', { class: 'help' }, g.help) : null,
+        g.list.length ? h('div', { class: 'card-grid' }, g.list.map(card)) : h('p', { class: 'muted' }, 'Empty. Use Move on an effect to put it here.'));
+      det.open = openSections.has(key) || (searching && g.list.length > 0);
+      det.addEventListener('toggle', () => { if (!searching) { det.open ? openSections.add(key) : openSections.delete(key); } });
+      return det;
+    }));
+  }
+
+  async function newSection() {
+    const name = await promptDialog('New section', 'Section name', '', 'Create');
+    if (!name) return null;
+    const r = await api.post('/sections', { name }); sections.splice(0, sections.length, ...r);
+    return r.find((x) => x.toLowerCase() === name.trim().toLowerCase()) || name;
+  }
+  async function renameSection(old) {
+    const name = await promptDialog('Rename section', 'New name', old, 'Rename');
+    if (!name || name === old) return;
+    const r = await api.post('/sections/rename', { name: old, new_name: name });
+    if (openSections.delete('custom:' + old)) openSections.add('custom:' + name.trim());
+    sections.splice(0, sections.length, ...r); toast('Renamed', 'success'); reload();
+  }
+  async function removeSection(name) {
+    if (!await confirmDialog('Delete section?', 'Delete the section "' + name + '"? Its effects are not deleted; they go back to their usual group.')) return;
+    const r = await api.post('/sections/delete', { name });
+    sections.splice(0, sections.length, ...r); toast('Section deleted'); reload();
+  }
+  function moveEffect(e) {
+    const NEW = '\u0000new';
+    const sel = h('select', { 'aria-label': 'Section' },
+      h('option', { value: '' }, 'Default (by type)'),
+      ...sections.map((name) => h('option', { value: name }, name)),
+      h('option', { value: NEW }, 'New section\u2026'));
+    sel.value = e.section || '';
+    const body = h('div', null, h('p', { class: 'muted' }, 'Choose the section for "' + e.name + '".'), sel,
+      h('div', { class: 'row', style: { marginTop: '12px' } },
+        h('button', { class: 'primary', type: 'button', onclick: act(async () => {
+          let target = sel.value;
+          if (target === NEW) { m.close(); target = await newSection(); if (!target) return; }
+          else m.close();
+          await api.put('/effects/' + e.id, { section: target });
+          openSections.add(target ? 'custom:' + target : 'built-in');
+          toast('Moved "' + e.name + '"', 'success'); reload();
+        }) }, 'Move')));
+    const m = modal('Move effect', body);
   }
 
   async function reload() {
@@ -146,7 +196,7 @@ export async function catalog(ctx) {
     const m = modal('New effect', body, { wide: true });
   }
 
-  render(app, pageHead('Effects', h('button', { class: 'primary', type: 'button', onclick: newEffect }, 'New effect')),
+  render(app, pageHead('Effects', h('span', { class: 'row tight' }, h('button', { type: 'button', onclick: act(async () => { if (await newSection()) { toast('Section created', 'success'); reload(); } }) }, 'New section'), h('button', { class: 'primary', type: 'button', onclick: newEffect }, 'New effect'))),
     h('p', { class: 'muted' }, 'An effect is one look for your lights. Add effects to run lists to play them in order, or press Play on lights to try one now.'),
     h('div', { class: 'toolbar' }, searchBox, count), chipsEl, h('div', { style: { height: '8px' } }), grid);
   chips(); draw();

@@ -56,6 +56,14 @@ def _send_email(cfg: Dict[str, Any], subject: str, body: str, kind: str = "") ->
             except smtplib.SMTPNotSupportedError:
                 pass                                  # a plain relay on the home network: carry on without it
         if cfg.get("smtp_user"):
+            # Try ONE login method. smtplib otherwise tries a second after a refusal and some servers (Gmail) hang up,
+            # which would hide the real reason ("Connection unexpectedly closed" instead of "wrong password").
+            features = getattr(smtp, "esmtp_features", {})
+            offered = (features.get("auth") or "").upper().split()
+            for method in ("PLAIN", "LOGIN"):
+                if method in offered:
+                    features["auth"] = method
+                    break
             smtp.login(str(cfg["smtp_user"]), str(cfg.get("smtp_password") or ""))
         smtp.send_message(msg)
 
@@ -75,16 +83,44 @@ def _send_webhook(cfg: Dict[str, Any], subject: str, body: str, kind: str = "") 
         raise
 
 
-def send(cfg: Dict[str, Any], subject: str, body: str, kind: str = "") -> Tuple[bool, List[str]]:
-    """Send through every configured channel. Returns (anything delivered, names of the channels that worked).
-    `kind` (see LOOK) sets the push priority and tag; use Budget to decide whether an alert may be sent at all."""
+def send_detailed(cfg: Dict[str, Any], subject: str, body: str, kind: str = "",
+                  only: Optional[str] = None) -> Tuple[List[str], Dict[str, str]]:
+    """Send through the configured channels (or just `only`). Returns (channels that delivered, {channel: why it failed})."""
     delivered: List[str] = []
+    failed: Dict[str, str] = {}
     for name in channels(cfg):
+        if only and name != only:
+            continue
         try:
             (_send_email if name == "email" else _send_webhook)(cfg, subject, body, kind)
             delivered.append(name)
         except Exception as exc:  # noqa: BLE001  (an alert problem must never become a second problem)
-            log.warning("ALERT delivery via %s failed: %s", name, exc)
+            failed[name] = _explain(exc)
+            log.warning("ALERT delivery via %s failed: %s", name, failed[name])
+    return delivered, failed
+
+
+def _explain(exc: Exception) -> str:
+    """A short, human reason for a failed delivery (the raw mail-server text is kept: it says what to fix)."""
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        text = exc.smtp_error.decode("utf-8", "replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+        text = " ".join(text.split())
+        if exc.smtp_code == 534 and "application-specific" in text.lower():
+            return ("Gmail refused the login because it needs an APP PASSWORD, not your normal password. In your Google account "
+                    "turn on 2-Step Verification, then create an app password at https://myaccount.google.com/apppasswords and "
+                    f"enter that 16-character code as the mail password. (server said {exc.smtp_code})")
+        if exc.smtp_code == 535:
+            return f"the mail server says the user name or password is wrong ({exc.smtp_code}): {text[:160]}"
+        return f"the mail server refused the login ({exc.smtp_code}): {text[:240]}"
+    if isinstance(exc, (TimeoutError, OSError)) and "timed out" in str(exc):
+        return "the mail or push server did not answer in time (a blocked port, or the wrong server or port)"
+    return " ".join(str(exc).split())[:300] or exc.__class__.__name__
+
+
+def send(cfg: Dict[str, Any], subject: str, body: str, kind: str = "", only: Optional[str] = None) -> Tuple[bool, List[str]]:
+    """Send through every configured channel. Returns (anything delivered, names of the channels that worked).
+    `kind` (see LOOK) sets the push priority and tag; use Budget to decide whether an alert may be sent at all."""
+    delivered, _ = send_detailed(cfg, subject, body, kind, only)
     return bool(delivered), delivered
 
 

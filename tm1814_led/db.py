@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from . import effects as fx
 from . import scheduler as sch
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "controller_host": "",        # IP or host name of the controller ("" = not configured yet)
@@ -131,6 +131,11 @@ class Database:
                 CREATE INDEX IF NOT EXISTS incidents_started ON incidents(started);
                 PRAGMA user_version = 3;
                 """)
+                self.conn.commit()
+            if version < 4:
+                if "section" not in [c[1] for c in self.conn.execute("PRAGMA table_info(effects)")]:
+                    self.conn.execute("ALTER TABLE effects ADD COLUMN section TEXT NOT NULL DEFAULT ''")
+                self.conn.execute("PRAGMA user_version = 4")
                 self.conn.commit()
 
     # ------------------------------------------------------------ helpers
@@ -392,6 +397,47 @@ class Database:
             self.conn.commit()
         return removed
 
+    # ------------------------------------------------------------ effect sections
+    # Effects sit in the built-in groups (by type) unless moved to a named section of your own ('' = built-in).
+    def list_sections(self) -> List[str]:
+        return list(self.get_state("sections", []))
+
+    def _section_name(self, name: Optional[str], create: bool = False) -> str:
+        name = " ".join((name or "").split())
+        if len(name) > 60:
+            raise ValueError("a section name can be at most 60 characters")
+        if name and create and name.lower() not in [x.lower() for x in self.list_sections()]:
+            self.set_state("sections", self.list_sections() + [name])
+        if name:   # use the stored spelling
+            name = next((x for x in self.list_sections() if x.lower() == name.lower()), name)
+        return name
+
+    def add_section(self, name: str) -> List[str]:
+        if not self._section_name(name, create=True):
+            raise ValueError("a section needs a name")
+        return self.list_sections()
+
+    def rename_section(self, old: str, new: str) -> List[str]:
+        secs = self.list_sections()
+        old = self._section_name(old)
+        new = " ".join((new or "").split())
+        if old not in secs:
+            raise NotFound(f"section {old!r} not found")
+        if not new or len(new) > 60:
+            raise ValueError("a section needs a name of 1-60 characters")
+        if new.lower() != old.lower() and new.lower() in [x.lower() for x in secs]:
+            raise Conflict(f"a section named {new!r} already exists")
+        self.set_state("sections", [new if x == old else x for x in secs])
+        self._write("UPDATE effects SET section=? WHERE section=?", (new, old))
+        return self.list_sections()
+
+    def delete_section(self, name: str) -> List[str]:
+        """Remove a section; its effects go back to their built-in group (none are deleted)."""
+        name = self._section_name(name)
+        self.set_state("sections", [x for x in self.list_sections() if x != name])
+        self._write("UPDATE effects SET section='' WHERE section=?", (name,))
+        return self.list_sections()
+
     # ------------------------------------------------------------ effects
     @staticmethod
     def _effect_row(r: sqlite3.Row) -> Dict[str, Any]:
@@ -401,7 +447,7 @@ class Database:
         except (fx.ParamError, ValueError):
             pass
         return {"id": r["id"], "name": r["name"], "kind": r["kind"], "params": params,
-                "description": r["description"], "seed_key": r["seed_key"],
+                "description": r["description"], "seed_key": r["seed_key"], "section": r["section"],
                 "created": r["created"], "updated": r["updated"]}
 
     def list_effects(self) -> List[Dict[str, Any]]:
@@ -414,28 +460,30 @@ class Database:
         return self._effect_row(r)
 
     def create_effect(self, name: str, kind: str, params: Optional[dict] = None, description: str = "",
-                      seed_key: Optional[str] = None) -> Dict[str, Any]:
+                      seed_key: Optional[str] = None, section: str = "") -> Dict[str, Any]:
         cleaned = fx.get_kind(kind).clean(params or {})
         now = _now()
-        cur = self._write("INSERT INTO effects(name, kind, params, description, seed_key, created, updated) "
-                          "VALUES(?,?,?,?,?,?,?)",
-                          (self._name(name), kind, json.dumps(cleaned), description or "", seed_key, now, now))
+        cur = self._write("INSERT INTO effects(name, kind, params, description, seed_key, section, created, updated) "
+                          "VALUES(?,?,?,?,?,?,?,?)",
+                          (self._name(name), kind, json.dumps(cleaned), description or "", seed_key,
+                           self._section_name(section, create=True), now, now))
         return self.get_effect(cur.lastrowid)
 
     def update_effect(self, effect_id: int, name: Optional[str] = None, params: Optional[dict] = None,
-                      description: Optional[str] = None) -> Dict[str, Any]:
+                      description: Optional[str] = None, section: Optional[str] = None) -> Dict[str, Any]:
         cur = self.get_effect(effect_id)
         new_name = self._name(name) if name is not None else cur["name"]
         new_params = fx.get_kind(cur["kind"]).clean(params) if params is not None else cur["params"]
         new_desc = description if description is not None else cur["description"]
-        self._write("UPDATE effects SET name=?, params=?, description=?, updated=? WHERE id=?",
-                    (new_name, json.dumps(new_params), new_desc, _now(), effect_id))
+        new_section = self._section_name(section, create=True) if section is not None else cur["section"]
+        self._write("UPDATE effects SET name=?, params=?, description=?, section=?, updated=? WHERE id=?",
+                    (new_name, json.dumps(new_params), new_desc, new_section, _now(), effect_id))
         return self.get_effect(effect_id)
 
     def duplicate_effect(self, effect_id: int, name: Optional[str] = None) -> Dict[str, Any]:
         src = self.get_effect(effect_id)
         return self.create_effect(name or self._unique_copy_name("effects", src["name"]), src["kind"],
-                                  src["params"], src["description"])
+                                  src["params"], src["description"], section=src["section"])
 
     def delete_effect(self, effect_id: int) -> None:
         self.get_effect(effect_id)

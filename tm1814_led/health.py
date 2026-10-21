@@ -44,6 +44,15 @@ def human(seconds: float) -> str:
     return f"{seconds} s"
 
 
+class TestPartial(Exception):
+    """A test alert reached some channels but not others (carries both lists)."""
+    __test__ = False
+
+    def __init__(self, delivered: List[str], failed: Dict[str, str]):
+        super().__init__("; ".join(f"{n}: {w}" for n, w in failed.items()))
+        self.delivered, self.failed = delivered, failed
+
+
 class ConnectionMonitor:
     def __init__(self, db: Database, controller, runner=None, manager=None, *,
                  finder: Optional[Callable[..., Optional[dict]]] = None,
@@ -358,22 +367,30 @@ class ConnectionMonitor:
         self.db.set_state("alert_budget", budget.s)
         return ok
 
-    def send_test(self) -> List[str]:
-        """The 'send a test alert' button. Always allowed, but it counts toward the daily total."""
+    def send_test(self, channel: Optional[str] = None) -> List[str]:
+        """The 'send a test alert' buttons: all channels, or just "email" / "webhook". Always allowed, but counted."""
         cfg = self.db.settings()
-        if not alerts.channels(cfg):
+        configured = alerts.channels(cfg)
+        if not configured:
             raise ValueError("No alert channel is set up yet: enter an email address and mail server, or a webhook URL.")
+        if channel and channel not in configured:
+            raise ValueError(f"The {channel} channel is not set up yet.")
         now = self.clock()
         budget = self._budget(cfg)
-        ok, via = alerts.send(cfg, "Test alert", "This is a test from the LED Controller program. If you can read this, "
-                                                  "alerts are working.", kind="test")
-        if not ok:
-            raise ValueError("The test alert could not be delivered; see the Logs page for the reason.")
-        budget.record_sent("test", now)
-        self.db.set_state("alert_budget", budget.s)
-        log.warning("ALERT sent via %s [test]: Test alert (%d of %d alerts used in the last 24 hours)", " and ".join(via),
-                    budget.used(now), budget.limit)
-        return via
+        delivered, failed = alerts.send_detailed(cfg, "Test alert", "This is a test from the LED Controller program. If you "
+                                                 "can read this, alerts are working.", kind="test", only=channel)
+        if failed:
+            reasons = "; ".join(f"{name}: {why}" for name, why in failed.items())
+            if not delivered:
+                raise ValueError(f"The test alert could not be delivered. {reasons}")
+        if delivered:
+            budget.record_sent("test", now)
+            self.db.set_state("alert_budget", budget.s)
+            log.warning("ALERT sent via %s [test]: Test alert (%d of %d alerts used in the last 24 hours)", " and ".join(delivered),
+                        budget.used(now), budget.limit)
+        if failed:                                          # some worked, some did not: say which, without calling it an error
+            raise TestPartial(delivered, failed)
+        return delivered
 
     # ------------------------------------------------------------ keeping this program's own threads alive
     def _supervise_threads(self) -> None:

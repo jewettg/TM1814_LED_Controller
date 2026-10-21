@@ -11,7 +11,7 @@ Perfect for eave lights, roof lines and permanent holiday lighting that was inst
 ## What you get
 
 * **A web page** you can open on your phone or computer.
-* **A catalog of 53 ready-made effects** — solid colors, all 24 of the controller's built-in animations, and Halloween scenes (embers, ghost, rolling wave, three kinds of lightning) plus rainbow, candy cane, twinkle, sunset gradient and more.
+* **A catalog of 54 ready-made effects, organized in collapsible sections you can rearrange** — solid colors, all 24 of the controller's built-in animations, and Halloween scenes (embers, ghost, rolling wave, three kinds of lightning) plus rainbow, candy cane, twinkle, sunset gradient and more.
 * **A full editor for every effect** — change speed, colors, direction, size, anything. Duplicate, rename, delete. A live preview shows what it will look like before you send it to the lights.
 * **A frame studio** to draw your own animations frame by frame, with gradients, fades, loops and undo.
 * **Run lists** — an ordered playlist of effects with how long each plays. Loop or shuffle them.

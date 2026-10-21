@@ -126,3 +126,22 @@ def test_needs_setup_when_no_controller_configured():
     with TestClient(app) as c:
         assert c.get("/api/status").json()["needs_setup"] is True
         assert c.get("/api/controller/state").json()["reachable"] is False
+
+
+def test_effect_sections(client):
+    emb = ids(client)["Halloween - Embers"]
+    assert client.get("/api/sections").json() == []
+    assert client.get(f"/api/effects/{emb}").json()["section"] == ""
+    assert client.post("/api/sections", json={"name": "  Halloween  "}).json() == ["Halloween"]
+    # moving by a differently-cased name uses the stored spelling; a new name creates the section
+    r = client.put(f"/api/effects/{emb}", json={"section": "halloween"}).json()
+    assert r["section"] == "Halloween"
+    assert client.put(f"/api/effects/{emb}", json={"section": "Fall"}).json()["section"] == "Fall"
+    assert client.get("/api/sections").json() == ["Halloween", "Fall"]
+    assert client.post(f"/api/effects/{emb}/duplicate", json={"name": "Copy"}).json()["section"] == "Fall"
+    assert client.post("/api/sections/rename", json={"name": "Fall", "new_name": "Autumn"}).json() == ["Halloween", "Autumn"]
+    assert client.get(f"/api/effects/{emb}").json()["section"] == "Autumn"
+    assert client.post("/api/sections/rename", json={"name": "Autumn", "new_name": "halloween"}).status_code == 409
+    assert client.post("/api/sections/delete", json={"name": "Autumn"}).json() == ["Halloween"]
+    assert client.get(f"/api/effects/{emb}").json()["section"] == ""   # back to the built-in group, not deleted
+    assert client.put(f"/api/effects/{emb}", json={"section": "x" * 61}).status_code == 422

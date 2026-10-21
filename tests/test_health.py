@@ -455,13 +455,38 @@ def test_the_status_reports_how_much_of_the_budget_is_used(rig, sent):
 
 def test_a_test_alert_always_goes_out_and_is_counted(rig, monkeypatch):
     got = []
-    monkeypatch.setattr(alerts, "send", lambda cfg, s, b, kind="": (got.append(kind), (True, ["webhook"]))[1])
+    monkeypatch.setattr(alerts, "send_detailed", lambda cfg, s, b, kind="", only=None: (got.append((kind, only)), (["webhook"], {}))[1])
     rig.db.update_settings({"alert_webhook": "http://x/y", "alert_daily_limit": 1})
     assert rig.m.send_test() == ["webhook"] and rig.m.send_test() == ["webhook"]       # even past the limit
-    assert got == ["test", "test"] and rig.m.snapshot()["alerts"]["sent_24h"] == 2
+    assert got == [("test", None), ("test", None)] and rig.m.snapshot()["alerts"]["sent_24h"] == 2
     rig.db.update_settings({"alert_webhook": ""})
     with pytest.raises(ValueError):
         rig.m.send_test()
+
+
+def test_a_test_can_target_one_channel_and_reports_the_real_reason_when_it_fails(rig, monkeypatch):
+    rig.db.update_settings({"alert_webhook": "http://x/y", "alert_email": "me@example.com", "smtp_host": "mail"})
+    seen = []
+    def fake(cfg, s, b, kind="", only=None):
+        seen.append(only)
+        if only == "email":
+            return [], {"email": "the mail server refused the login (535): Username and Password not accepted"}
+        if only == "webhook":
+            return ["webhook"], {}
+        return ["webhook"], {"email": "the mail server refused the login (535): Username and Password not accepted"}
+    monkeypatch.setattr(alerts, "send_detailed", fake)
+    with pytest.raises(ValueError, match="refused the login"):                           # only email, and it failed
+        rig.m.send_test("email")
+    assert rig.m.send_test("webhook") == ["webhook"]
+    with pytest.raises(health.TestPartial) as exc:                                       # everything: one worked, one did not
+        rig.m.send_test()
+    assert exc.value.delivered == ["webhook"] and "email" in exc.value.failed
+    assert seen == ["email", "webhook", None]
+    with pytest.raises(ValueError, match="No alert channel is set up"):
+        Rig().m.send_test("email")                                                       # nothing configured at all
+    only_push = Rig(alert_webhook="http://x/y")
+    with pytest.raises(ValueError, match="The email channel is not set up"):
+        only_push.m.send_test("email")                                                   # push is set up, email is not
 
 
 def test_the_budget_survives_a_restart_of_the_program(rig, sent):

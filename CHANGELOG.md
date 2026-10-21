@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+* **Effect sections.** The Effects page groups are collapsed until opened (searching opens the ones with matches). You
+  can create your own sections, rename or delete them, and move any effect between sections with its Move button;
+  deleting a section never deletes effects (they return to their built-in group).
+* **Fall Colors effect** (random patches of 2-5 LEDs in fall colors, with black spacing, new pattern every minute by
+  default; add or remove colors in the editor). Test buttons for email and phone push separately, with the real
+  failure reason (for example Gmail's "app password required"). Settings layout fixes.
 * **Location by address.** Settings asks for an address, town or ZIP code instead of latitude and longitude; the program
   looks it up (OpenStreetMap Nominatim, politely: cached, one request a second) and shows today's sunrise and sunset to
   confirm. Sunrise/sunset schedules in either order (sunset to sunrise, sunrise to sunset, mixed with clock times) with

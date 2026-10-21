@@ -22,7 +22,7 @@ from .auth import COOKIE, MIN_PASSWORD_LENGTH, Auth, fingerprint, hash_password
 from .config import default_data_dir
 from .controller import Controller, ControllerError, SimulatedController, discover
 from .db import Conflict, Database, NotFound
-from .health import ConnectionMonitor, STALL_SEC
+from .health import ConnectionMonitor, STALL_SEC, TestPartial
 from .runner import DBLogHandler, Runner, ScheduleManager
 from .seed import seed_catalog
 
@@ -36,12 +36,19 @@ class EffectIn(BaseModel):
     kind: str
     params: Dict[str, Any] = Field(default_factory=dict)
     description: str = ""
+    section: str = ""
 
 
 class EffectPatch(BaseModel):
     name: Optional[str] = None
     params: Optional[Dict[str, Any]] = None
     description: Optional[str] = None
+    section: Optional[str] = None
+
+
+class SectionIn(BaseModel):
+    name: str
+    new_name: Optional[str] = None
 
 
 class DuplicateIn(BaseModel):
@@ -113,6 +120,10 @@ class LoginIn(BaseModel):
 class PasswordIn(BaseModel):
     current: str = ""
     new: str = ""
+
+
+class TestAlertIn(BaseModel):
+    channel: Optional[str] = None             # "email" or "webhook"; omitted = every configured channel
 
 
 class LocationIn(BaseModel):
@@ -357,10 +368,12 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
         return monitor.recover_now()
 
     @app.post("/api/health/test-alert")
-    def health_test_alert():
-        return {"sent": True, "channels": monitor.send_test()}
+    def health_test_alert(body: TestAlertIn = TestAlertIn()):
+        try:
+            return {"sent": True, "channels": monitor.send_test(body.channel), "failed": {}}
+        except TestPartial as exc:                         # reached some channels, not others
+            return {"sent": True, "channels": exc.delivered, "failed": exc.failed}
 
-    # ---------------------------------------------------------------- location (address -> sunrise and sunset)
     @app.post("/api/location/search")
     def location_search(body: LocationIn):
         """Look an address, town or ZIP code up; returns candidate places to choose from (never saved by this call)."""
@@ -400,9 +413,25 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
     def list_effects():
         return db.list_effects()
 
+    @app.get("/api/sections")
+    def list_sections():
+        return db.list_sections()
+
+    @app.post("/api/sections", status_code=201)
+    def add_section(body: SectionIn):
+        return db.add_section(body.name)
+
+    @app.post("/api/sections/rename")
+    def rename_section(body: SectionIn):
+        return db.rename_section(body.name, body.new_name or "")
+
+    @app.post("/api/sections/delete")
+    def delete_section(body: SectionIn):
+        return db.delete_section(body.name)
+
     @app.post("/api/effects", status_code=201)
     def create_effect(body: EffectIn):
-        return db.create_effect(body.name, body.kind, body.params, body.description)
+        return db.create_effect(body.name, body.kind, body.params, body.description, section=body.section)
 
     @app.get("/api/effects/{effect_id}")
     def get_effect(effect_id: int):
@@ -410,7 +439,7 @@ def create_app(data_dir: Optional[str] = None, controller_host: Optional[str] = 
 
     @app.put("/api/effects/{effect_id}")
     def update_effect(effect_id: int, body: EffectPatch):
-        out = db.update_effect(effect_id, body.name, body.params, body.description)
+        out = db.update_effect(effect_id, body.name, body.params, body.description, body.section)
         _refresh_if_playing()
         return out
 

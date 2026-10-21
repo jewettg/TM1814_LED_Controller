@@ -584,7 +584,8 @@ Interactive documentation is served by FastAPI at `/docs` (and `/openapi.json`) 
 | `GET /api/health` | `{state, since, last_ok, failures, unreachable_for_sec, error, diagnosis, host, mac, incident, alert_channels, heartbeat, incidents[]}` |
 | `GET /api/health/live` | **public**, secret-free liveness for the watchdog: `{ok, version, heartbeat, uptime_sec}` |
 | `POST /api/health/recover` | search for the controller now and follow it: `{moved, host, was, state, mac_known}` |
-| `POST /api/health/test-alert` | send a test alert through the configured channels |
+| `POST /api/health/test-alert` | send a test alert; body `{channel: "email"\|"webhook"}` limits it to one channel, response `{sent, channels, failed}` |
+| `GET /api/sections`, `POST /api/sections`, `/sections/rename`, `/sections/delete` | effect sections (names stored in settings row `_state_sections`; `effects.section` is `''` for the built-in group by type; deleting a section resets its effects, schema v4) |
 | `GET /api/incidents?limit=50` | recorded connection problems, newest first |
 | `GET /api/settings`, `PUT /api/settings` | read / change settings (partial body; validated; applied live) |
 | `GET /api/controller/state` | query the controller: `{reachable, state{…}, error}` |
