@@ -159,14 +159,76 @@ def test_user_stop_is_not_undone_by_the_schedule_within_the_same_window(rig):
     assert runner.status()["state"] == "running"
 
 
-def test_manual_play_is_not_preempted_by_a_schedule(rig):
+def test_schedule_start_takes_over_from_manual_play(rig):
+    db, ctrl, runner, mgr = rig
+    s = sched(db, make_list(db, durations=(60, 60)))
+    mgr.evaluate(now_at(12))
+    runner.play_effect(db.create_effect("Blue", "solid", {"color": "#0000ff"}), None)
+    mgr.evaluate(now_at(18, 0))                                       # the window opens: the schedule wins
+    assert runner.status()["source"] == f"schedule:{s['id']}"
+
+
+def test_manual_play_inside_a_window_lasts_until_the_next_schedule_event(rig):
+    db, ctrl, runner, mgr = rig
+    s = sched(db, make_list(db, durations=(60, 60)))
+    mgr.evaluate(now_at(19))
+    blue = db.create_effect("Blue", "solid", {"color": "#0000ff"})
+    runner.play_effect(blue, None)                                    # playing around mid-window
+    mgr.evaluate(now_at(20)); mgr.evaluate(now_at(22))
+    assert runner.status()["plan"] == "Blue" and runner.status()["source"] == "manual"
+    mgr.evaluate(now_at(23, 1))                                       # the window closes: lights go off
+    assert runner.status()["state"] == "idle"
+    mgr.evaluate(now_at(19, day=14))                                  # and the next night it starts again
+    assert runner.status()["source"] == f"schedule:{s['id']}"
+
+
+def test_a_stop_stays_until_the_next_event_even_for_manual_plays(rig):
+    db, ctrl, runner, mgr = rig
+    sched(db, make_list(db, durations=(60, 60)))
+    mgr.evaluate(now_at(19))
+    runner.stop()                                                     # someone turns them off
+    for h in (20, 21, 22):
+        mgr.evaluate(now_at(h))
+        assert runner.status()["state"] == "idle"
+
+
+def test_enabling_a_schedule_inside_its_window_takes_charge_and_it_ends_on_time(rig):
     db, ctrl, runner, mgr = rig
     rl = make_list(db, durations=(60, 60))
-    sched(db, rl)
-    e = db.create_effect("Blue", "solid", {"color": "#0000ff"})
-    runner.play_effect(e, None)
+    s = sched(db, rl, enabled=False)
     mgr.evaluate(now_at(19))
-    assert runner.status()["plan"] == "Blue" and runner.status()["source"] == "manual"
+    assert runner.status()["state"] == "idle"
+    runner.play_runlist(rl["id"])                                     # started by hand after the start time
+    mgr.evaluate(now_at(20))
+    assert runner.status()["source"] == "manual"                      # a disabled schedule does not interfere
+    db.update_schedule(s["id"], enabled=True)
+    mgr.evaluate(now_at(20, 1))
+    assert runner.status()["source"] == f"schedule:{s['id']}" and runner.status()["state"] == "running"
+    mgr.evaluate(now_at(23, 1))
+    assert runner.status()["state"] == "idle"                         # honored: stops at its end time
+
+
+def test_disabling_an_active_schedule_stops_its_run_but_not_a_manual_one(rig):
+    db, ctrl, runner, mgr = rig
+    s = sched(db, make_list(db, durations=(60, 60)))
+    mgr.evaluate(now_at(19))
+    db.update_schedule(s["id"], enabled=False)
+    mgr.evaluate(now_at(19, 1))
+    assert runner.status()["state"] == "idle"
+    runner.play_effect(db.create_effect("Blue", "solid", {"color": "#0000ff"}), None)
+    mgr.evaluate(now_at(19, 2))
+    assert runner.status()["plan"] == "Blue"
+
+
+def test_a_restart_does_not_undo_a_stop_in_the_same_window(rig):
+    db, ctrl, runner, mgr = rig
+    sched(db, make_list(db, durations=(60, 60)))
+    mgr.evaluate(now_at(19))
+    mgr.suppress_active(now_at(19, 1)); runner.stop()
+    from tm1814_led.runner import ScheduleManager
+    fresh = ScheduleManager(db, runner)                                # as after a restart of the program
+    fresh.evaluate(now_at(19, 5))
+    assert runner.status()["state"] == "idle"
 
 
 def test_higher_priority_schedule_wins_and_disabled_ignored(rig):

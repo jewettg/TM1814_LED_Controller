@@ -477,11 +477,12 @@ On each eligible date *D* the window runs from `start_time` to `end_time`. If th
 
 ### Manager behavior (`ScheduleManager.evaluate`, every 5 s)
 
-* A **manual** play is never preempted. When it ends, the schedule (if still in its window) takes over.
-* If a schedule becomes active → `Runner.play_runlist(source="schedule:<id>", window=<start ISO>)`.
-* If no schedule is active and a scheduled plan is running → stop it (applies the idle action).
-* A scheduled run that **finished** (non-looping run list) or was **stopped by the user** is remembered as `(schedule id, window start)` and **not restarted within the same window**. The user's Stop button also suppresses the current window, so lights stay off until the next window.
-* Editing the run list of an active schedule restarts the scheduled run (detected by the run list's `updated` timestamp).
+Schedules are **event driven**: the manager remembers which window (schedule id + window start, or none) was in charge at the previous check, and acts only when that changes.
+
+* An **event** is a change of that window: a window starts, a window ends, or a schedule is enabled, disabled or edited. At an event with a window in charge, the schedule takes over from *anything*, manual plays included (`Runner.play_runlist(source="schedule:<id>", window=<start ISO>)`; if a manual play is already showing exactly that run list it is adopted via `Runner.adopt_plan` without restarting). Enabling a schedule inside its window counts as an event, so it starts late and still ends on time.
+* An event with **no** window in charge stops the lights when the window ran out naturally (`now >= previous.end`, whatever was playing) or when a scheduled run was disabled. Disabling a schedule never stops a manual play.
+* **Between events nothing is level-triggered**: a manual play, change or Stop stays until the next event. The only exception is editing the run list of the active schedule's own run, which restarts that run (detected by the run list's `updated` timestamp).
+* The one thing remembered across restarts is a Stop: `(schedule id, window start)` of windows the user stopped (or that failed to start) is kept in the database (`_state_schedule_stopped`, newest 20) and honored on the first check after the program starts, so a restart does not undo a Stop.
 
 ---
 

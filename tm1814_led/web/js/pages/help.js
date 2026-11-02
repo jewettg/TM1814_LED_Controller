@@ -14,7 +14,7 @@ export function help(ctx) {
         h('p', null, 'A run list is a playlist: effects shown one after another, each for a time you choose. It can loop forever, play once, or shuffle. Reorder items by dragging the handle or using the arrows.')),
       sec('Schedules',
         h('p', null, 'A schedule plays a run list automatically in a time window: for example every day from sunset to 11 pm, or the first Saturday of each month. Times can be a clock time or sunrise and sunset with an offset in minutes. Sunrise and sunset need your latitude and longitude in Settings.'),
-        h('p', null, 'If two schedules overlap, the one with the higher priority plays. The Next occurrences panel shows exactly when a schedule will start.')),
+        h('p', null, 'If two schedules overlap, the one with the higher priority plays. Schedules take over at their start and end times, even from something you started by hand; in between, the lights are yours and Stop stays stopped until the next start or end. To keep a schedule from acting, disable it. The Next occurrences panel shows exactly when a schedule will start.')),
       sec('What does Stop do?',
         h('p', null, 'Stop ends what is playing now and puts the lights in their idle state (set in Settings: off, unchanged, or a solid color). It stays off until the next scheduled window begins; it does not disable your schedules. To stop a schedule for good, switch it off on the Schedules page.')),
       sec('Quick tips',

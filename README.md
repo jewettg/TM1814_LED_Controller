@@ -77,7 +77,7 @@ Open <http://localhost:8080/>. Add `--simulate` to explore the whole app **with 
 
 What is playing right now, with a progress bar; **Play / Stop / Next / Pause**; **power** and **master brightness**; a **quick color** picker; start any run list; the active and upcoming schedules; the controller's status; and the latest log lines.
 
-> **What does Stop do?** It ends what is playing, applies your "when idle" setting (default: lights off) and keeps any schedule that is currently in its time window from starting again until its **next** window. To bring a schedule back right away, play its run list manually.
+> **What does Stop do?** It ends what is playing and applies your "when idle" setting (default: lights off). It stays that way until the next schedule event (a window starting or ending).
 
 ### Effects (the catalog)
 
@@ -132,7 +132,9 @@ A schedule says *when* a run list plays:
 | **Date range** (optional) | the first and last dates it may run, e.g. Oct 24 – Oct 31 |
 | **Start / end time** | a clock time, or **sunrise / sunset** with minutes before or after (e.g. *30 minutes before sunset*). If the end is earlier than the start the schedule runs overnight. |
 | **Repeat** | once · every N days · chosen weekdays (every N weeks) · a day of the month (or the last day) · the Nth weekday of the month (*first Saturday*, *last Friday*) · every year on a date |
-| **Priority** | when two schedules overlap, the higher number wins |
+| **Priority** | when two schedules overlap, the higher number wins; the Schedules and Dashboard pages show the overridden one crossed out |
+
+**Schedules and playing by hand.** Schedules are in charge at their own *events*: a window starting, a window ending, or a schedule being enabled, disabled or edited. At an event the schedule takes over, even from something you started by hand. In between, the lights are yours: play anything, adjust colors, or press **Stop**, and it stays that way until the next event. So the night schedule always switches on at its start and off at its end, no matter what you did in the evening. To keep a schedule from acting, disable it. If you enable a schedule after its start time, it starts right away and still ends on time.
 | **Enabled** | switch off without deleting |
 
 The editor shows the **next occurrences** as you type, so you can check it before saving. Ready-made presets cover the common cases ("every night from sunset to 11 pm", "first of every month", "Halloween week").

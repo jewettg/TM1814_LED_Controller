@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* **Schedules always win at their own events.** Playing something by hand no longer blocks a schedule: when a window
+  starts or ends, or a schedule is enabled, disabled or edited, the schedule takes over (and a window that ends
+  switches the lights off even if you started something by hand). Between events the lights are yours, and a Stop stays
+  until the next event. A schedule enabled after its start time starts right away and still ends on time. A Stop now
+  also survives a restart of the program. The Dashboard and Schedules pages show priorities and cross out overlapped windows.
 * **Effect sections.** The Effects page groups are collapsed until opened (searching opens the ones with matches). You
   can create your own sections, rename or delete them, and move any effect between sections with its Move button;
   deleting a section never deletes effects (they return to their built-in group).

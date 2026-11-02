@@ -136,6 +136,12 @@ class Runner:
         self._set_plan({"source": source, "name": rl["name"], "runlist_id": runlist_id, "loop": rl["loop"],
                         "shuffle": rl["shuffle"], "items": items, "window": window, "sig": rl["updated"]})
 
+    def adopt_plan(self, source: str, window: Optional[str]) -> None:
+        """Hand the plan that is already playing over to a schedule, without restarting it."""
+        with self.lock:
+            if self._plan:
+                self._plan = {**self._plan, "source": source, "window": window}
+
     def play_effect(self, effect: Dict[str, Any], duration: Optional[float] = None, source: str = "manual") -> None:
         self._set_plan({"source": source, "name": effect["name"], "runlist_id": None, "loop": True,
                         "shuffle": False, "items": [self._make_item(effect, duration)], "window": None, "sig": 0})
@@ -420,12 +426,18 @@ class Runner:
             log.warning("could not apply idle action: %s", exc)
 
 
+_UNSET = object()
+
+
 class ScheduleManager:
     """Starts and stops run lists according to the schedules."""
 
     def __init__(self, db: Database, runner: Runner, interval: float = 5.0):
         self.db, self.runner, self.interval = db, runner, interval
-        self._finished: Set[Tuple[int, str]] = set()
+        # windows the user stopped on purpose; remembered across restarts so a restart does not undo a Stop
+        self._finished: Set[Tuple[int, str]] = {(int(i), str(w)) for i, w in db.get_state("schedule_stopped", [])}
+        self._last_key: Any = _UNSET        # which scheduled window was in charge at the previous check
+        self._last_cand: Any = None
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.active_id: Optional[int] = None
@@ -444,14 +456,23 @@ class ScheduleManager:
     def _plan_ended(self, plan: dict, reason: str) -> None:
         """A scheduled run that finished or was stopped is not restarted within the same window."""
         if plan["source"].startswith("schedule:") and plan.get("window") and reason in ("finished", "stopped"):
-            self._finished.add((int(plan["source"].split(":")[1]), plan["window"]))
+            self._mark_stopped(int(plan["source"].split(":")[1]), plan["window"])
+
+    def _mark_stopped(self, schedule_id: int, window: str) -> None:
+        self._finished.add((schedule_id, window))
+        keep = sorted(self._finished, key=lambda x: x[1])[-20:]
+        self._finished = set(keep)
+        try:
+            self.db.set_state("schedule_stopped", [list(x) for x in keep])
+        except Exception:   # noqa: BLE001  (remembering is a courtesy; never break a Stop over it)
+            log.debug("could not remember the stopped window", exc_info=True)
 
     def suppress_active(self, now: Optional[dt.datetime] = None) -> None:
         """Called when the user presses Stop: stay off until the next window instead of restarting right away."""
         now = now or dt.datetime.now(dt.timezone.utc)
         cand = self._pick(now)
         if cand:
-            self._finished.add((cand.id, cand.start.isoformat()))
+            self._mark_stopped(cand.id, cand.start.isoformat())
 
     def _rows(self) -> List[dict]:
         return self.db.list_schedules()
@@ -463,30 +484,49 @@ class ScheduleManager:
         return sch.pick_active(rows, now, place)
 
     def evaluate(self, now: Optional[dt.datetime] = None) -> None:
+        """Schedules are in charge at their own events, and only then.
+
+        An event is a change in which scheduled window is in charge: a window starts, a window ends, a schedule is
+        enabled, disabled or edited. At an event the schedule takes over, whatever was playing by hand (a window that
+        ends with nothing following it switches the lights off). Between events the lights are yours: play, change or
+        Stop anything and it stays that way until the next event.
+        """
         now = now or dt.datetime.now(dt.timezone.utc)
         plan = self.runner.plan_info()
-        if plan and plan["source"] == "manual":
-            return
         cand = self._pick(now)
+        key = (cand.id, cand.start.isoformat()) if cand else None
+        first = self._last_key is _UNSET
+        prev, changed = self._last_cand, first or key != self._last_key
+        self._last_key, self._last_cand = key, cand
         self.active_id = cand.id if cand else None
-        if cand is None:
-            if plan and plan["source"].startswith("schedule:"):
-                self.runner.stop(idle=True, by_user=False)
-            return
-        window = cand.start.isoformat()
-        source = f"schedule:{cand.id}"
-        if (cand.id, window) in self._finished:
-            return
-        sched = self.db.get_schedule(cand.id)
-        if plan and plan["source"] == source and plan.get("window") == window:
-            if plan.get("sig") == self.db.get_runlist(sched["runlist_id"])["updated"]:
+        if changed:
+            if cand is None:
+                ended = prev is not None and now >= prev.end        # a window ran out (rather than being disabled)
+                if plan and (plan["source"].startswith("schedule:") or ended):
+                    self.runner.stop(idle=True, by_user=False)
                 return
+            if first and key in self._finished:                      # stopped on purpose before a restart
+                return
+            self._take_over(cand, plan)
+            return
+        if cand and plan and plan["source"] == f"schedule:{cand.id}" and plan.get("window") == cand.start.isoformat():
+            sched = self.db.get_schedule(cand.id)                    # its run list was edited: show the new version
+            if plan.get("sig") != self.db.get_runlist(sched["runlist_id"])["updated"]:
+                self._take_over(cand, plan)
+
+    def _take_over(self, cand, plan: Optional[dict]) -> None:
+        window, source = cand.start.isoformat(), f"schedule:{cand.id}"
+        sched = self.db.get_schedule(cand.id)
         try:
-            self.runner.play_runlist(sched["runlist_id"], source=source, window=window)
+            rl = self.db.get_runlist(sched["runlist_id"])
+            if plan and plan["source"] == "manual" and plan.get("runlist_id") == rl["id"] and plan.get("sig") == rl["updated"]:
+                self.runner.adopt_plan(source, window)               # already showing exactly this: just take charge of it
+            else:
+                self.runner.play_runlist(sched["runlist_id"], source=source, window=window)
             log.info("schedule %r is active until %s", sched["name"], cand.end.strftime("%a %H:%M"))
         except (ValueError, LookupError) as exc:
             log.error("schedule %r cannot start: %s", sched["name"], exc)
-            self._finished.add((cand.id, window))
+            self._mark_stopped(cand.id, window)
 
     def upcoming(self, now: Optional[dt.datetime] = None, count: int = 5) -> List[dict]:
         """The next windows of every enabled schedule, soonest first, each marked as running, partly overridden or
