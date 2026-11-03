@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* **Brightness per effect.** Every effect the program draws (fixed and animated; not the controller-native ones) has an
+  "Override master brightness" checkbox with its own brightness slider. Checked, the effect ignores the master slider.
+* **Fall Colors March effect** (in Thanksgiving / Fall): the Fall Colors palette in order along the strip; a slider sets
+  the time between steps (0 = no movement), each step moves every patch to the next color. Patch size is adjustable.
+
 * **Schedules always win at their own events.** Playing something by hand no longer blocks a schedule: when a window
   starts or ends, or a schedule is enabled, disabled or edited, the schedule takes over (and a window that ends
   switches the lights off even if you started something by hand). Between events the lights are yours, and a Stop stays

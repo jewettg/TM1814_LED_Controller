@@ -220,6 +220,7 @@ class Runner:
             with self.lock:
                 plan, gen = self._plan, self._gen
             if plan is None:
+                self.ctrl.brightness_override = None
                 self.item_status = {}
                 self.wake.wait(0.5)
                 self.wake.clear()
@@ -307,6 +308,9 @@ class Runner:
             time.sleep(1)
             return
         self._skip = False
+        self.ctrl.brightness_override = (eff.p["brightness_level"] if eff.p.get("override_brightness") and not eff.native
+                                         else None)
+        self.ctrl.invalidate()
         duration = item["duration"]
         self.item_status = {"index": idx, "count": len(plan["items"]), "name": item["name"], "kind": item["kind"],
                             "family": eff.family(),
@@ -408,6 +412,7 @@ class Runner:
             self._state_ok = False
 
     def _apply_idle(self) -> None:
+        self.ctrl.brightness_override = None
         action = self._idle["action"]
         self.item_status = {}
 

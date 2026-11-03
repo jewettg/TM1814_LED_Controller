@@ -315,3 +315,19 @@ def test_upcoming_marks_overridden_windows(tmp_path):
     by = {w["name"]: w for w in got}
     assert by["Low"]["status"] == "overridden" and by["Low"]["overridden_by"][0]["name"] == "High"
     assert by["High"]["status"] == "runs" and by["High"]["priority"] == 100
+
+
+def test_an_effects_brightness_override_applies_while_it_plays_and_the_master_returns_after(rig):
+    db, ctrl, runner, _ = rig
+    ctrl.brightness = 40
+    eff = db.create_effect("Own level", "nth", {"every": 4, "override_brightness": True, "brightness_level": 90})
+    runner.play_effect(eff, None)
+    assert wait_for(lambda: ctrl.brightness_override == 90)
+    assert ctrl.level == 90 and ctrl.brightness == 40
+    plain = db.create_effect("Master level", "nth", {"every": 4})
+    runner.play_effect(plain, None)
+    assert wait_for(lambda: ctrl.brightness_override is None and ctrl.level == 40)
+    runner.play_effect(eff, None)
+    assert wait_for(lambda: ctrl.brightness_override == 90)
+    runner.stop()
+    assert wait_for(lambda: ctrl.brightness_override is None)

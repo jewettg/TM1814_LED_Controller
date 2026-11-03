@@ -57,6 +57,17 @@ function numberControl(p, value, onChange) {
   return h('div', { class: 'slider-row' }, range, num, p.unit ? h('span', { class: 'unit' }, p.unit) : null);
 }
 
+/** The per-effect brightness: a checkbox that turns the slider on and the master brightness off for this effect. */
+function brightnessBlock(over, level, values, initial, onChange) {
+  values[level.key] = initial && initial[level.key] != null ? initial[level.key] : level.default;
+  const slider = numberControl(level, values[level.key], (v) => { values[level.key] = v; onChange(values); });
+  const sync = () => slider.querySelectorAll('input').forEach((i) => { i.disabled = !values[over.key]; });
+  const sw = switchEl(!!values[over.key], (v) => { values[over.key] = v; sync(); onChange(values); }, over.label);
+  sync();
+  return h('div', { class: 'param' }, h('div', { class: 'field-label' }, 'Brightness'), sw, slider,
+    h('div', { class: 'help' }, over.help));
+}
+
 /**
  * Build the form. Returns { el, values, errors(map key -> message setter) }.
  * `values` is a live object mutated as the user edits; onChange(values) fires after each edit.
@@ -66,8 +77,9 @@ export function buildParamForm(schema, initial, onChange) {
   const values = {};
   const errBoxes = {};
   const el = h('div');
+  const level = schema.params.find((q) => q.key === 'brightness_level');
   for (const p of schema.params) {
-    if (p.type === 'frames') continue;
+    if (p.type === 'frames' || (p.key === 'brightness_level' && level)) continue;
     values[p.key] = initial && initial[p.key] !== undefined && initial[p.key] !== null ? initial[p.key] : p.default;
     const id = nextId('p');
     const emit = (v) => { values[p.key] = v; if (errBoxes[p.key]) errBoxes[p.key].textContent = ''; onChange(values); };
@@ -86,6 +98,7 @@ export function buildParamForm(schema, initial, onChange) {
     }
     const err = h('div', { class: 'inline-error', role: 'alert' });
     errBoxes[p.key] = err;
+    if (p.key === 'override_brightness' && level) { el.append(brightnessBlock(p, level, values, initial, onChange)); continue; }
     el.append(h('div', { class: 'param' },
       h('label', { class: 'field-label', for: labelFor || undefined }, p.label),
       control, p.help ? h('div', { class: 'help' }, p.help) : null, err));

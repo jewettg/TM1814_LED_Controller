@@ -19,7 +19,7 @@ export function help(ctx) {
         h('p', null, 'Stop ends what is playing now and puts the lights in their idle state (set in Settings: off, unchanged, or a solid color). It stays off until the next scheduled window begins; it does not disable your schedules. To stop a schedule for good, switch it off on the Schedules page.')),
       sec('Quick tips',
         h('ul', null,
-          h('li', null, 'The master brightness slider on the Dashboard dims everything.'),
+          h('li', null, 'The master brightness slider on the Dashboard dims everything, except an effect where you checked "Override master brightness": that one uses its own brightness slider.'),
           h('li', null, 'Power off also stops the current run list.'),
           h('li', null, 'In the frame studio, drag across the strip to select LEDs, then Fill or Gradient. Press the Shortcuts button there to see keyboard shortcuts.'),
           h('li', null, 'If something looks wrong, check the Logs page.')))));

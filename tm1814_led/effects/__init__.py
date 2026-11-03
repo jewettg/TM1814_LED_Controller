@@ -13,7 +13,7 @@ from __future__ import annotations
 import random
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
-from ..protocol import RGB, Pixel, parse_hex, to_hex
+from ..protocol import RGB, Pixel, parse_hex, scale_pixel, to_hex
 
 
 class ParamError(ValueError):
@@ -87,6 +87,15 @@ class Param:
         return v
 
 
+# Offered by every effect this program draws (not the controller-native ones): its own brightness instead of the master's.
+BRIGHTNESS_PARAMS = (
+    Param("override_brightness", "Override master brightness", "bool", False,
+          help="Checked: this effect shows at the brightness below and ignores the master brightness slider. "
+               "Unchecked: the master brightness slider controls it."),
+    Param("brightness_level", "LED brightness", "int", 100, min=1, max=100, unit="%"),
+)
+
+
 class Effect:
     kind = ""
     label = ""
@@ -108,6 +117,10 @@ class Effect:
 
     # ---- schema / validation
     @classmethod
+    def all_params(cls) -> Sequence[Param]:
+        return tuple(cls.params) if cls.native else tuple(cls.params) + BRIGHTNESS_PARAMS
+
+    @classmethod
     def family(cls) -> str:
         return "native" if cls.native else ("fixed" if cls.static else "animated")
 
@@ -116,7 +129,7 @@ class Effect:
         return {"kind": cls.kind, "label": cls.label, "description": cls.description, "category": cls.category,
                 "family": cls.family(), "native": cls.native, "static": cls.static, "previewable": cls.previewable,
                 "preview_note": cls.preview_note,
-                "params": [p.to_dict() for p in cls.params]}
+                "params": [p.to_dict() for p in cls.all_params()]}
 
     @classmethod
     def upgrade_params(cls, params: dict) -> dict:
@@ -127,7 +140,7 @@ class Effect:
     def clean(cls, params: dict) -> dict:
         params = cls.upgrade_params(dict(params))
         out: Dict[str, Any] = {}
-        for p in cls.params:
+        for p in cls.all_params():
             out[p.key] = p.clean(params[p.key]) if p.key in params and params[p.key] is not None else p.default
         return cls.clean_extra(out)
 
@@ -191,6 +204,8 @@ def render_preview(kind: str, params: Optional[dict], led_count: int, seconds: f
     count = 1 if cls.static else max(1, min(600, int(seconds * fps)))
     for k in range(count):
         px = eff.frame(k / fps)
+        if eff.p.get("override_brightness"):         # show the level it will really have on the lights
+            px = [scale_pixel(c, eff.p["brightness_level"]) for c in px]
         frames.append("".join("%02x%02x%02x" % tuple(int(v) & 255 for v in to_rgb(c)) for c in px))
     return frames
 

@@ -289,7 +289,7 @@ Implemented in `controller.py` (`show_frame`) and `runner.py`.
 
 **Goal:** show an arbitrary 250-pixel frame as fast as the controller allows, using only the `E1 26` paint command.
 
-1. **Master brightness** is applied to every color before sending (`Controller.brightness`, 0–100).
+1. **Master brightness** is applied to every color before sending (`Controller.brightness`, 0–100). A drawn (fixed or animated) effect can override it: every such kind gets the `override_brightness` and `brightness_level` params from `BRIGHTNESS_PARAMS`, and while it plays the runner sets `Controller.brightness_override`, which `Controller.level` prefers over the master. Native effects do not offer it.
 2. **First frame, or after any reconnect/mode change:** enter scribble mode (`E1 23`), wait 0.4 s, then paint *every* pixel.
 3. **Diffing:** later frames compare against the previous frame and send only pixels whose color changed. An unchanged frame sends **zero** commands (Verified in tests).
 4. **Grouping:** changed pixels are grouped by color; each group is one `E1 26`.

@@ -413,3 +413,28 @@ class FallColors(Effect):
             self._slot = slot
             self._pattern = self._make_pattern()
         return list(self._pattern)
+
+
+@register
+class FallColorsMarch(Effect):
+    kind = "fall_march"
+    label = "Fall colors march"
+    category = "Animated"
+    description = ("The fall colors in order, repeated along the whole strip. At the interval you set, every patch takes "
+                   "the next color, so the colors seem to march down the strip. Set the interval to 0 to hold still. "
+                   "Needs this program running to move.")
+    preview_note = "Preview only: it is sped up, with the interval shortened to a quarter of what you set."
+    params = (
+        Param("colors", "Fall colors", "colors", FALL_PALETTE, min=1, max=16),
+        Param("patch", "Patch size", "int", 3, min=1, max=30, unit="LEDs", help="How many LEDs each color covers."),
+        Param("march_seconds", "Time between steps", "float", 1.0, min=0, max=10, step=0.1, unit="seconds",
+              help="How long the colors rest before the next step. 0 = no movement."),
+    )
+
+    def frame(self, t: float) -> List[Pixel]:
+        every = float(self.p["march_seconds"])
+        if self.preview:
+            every /= 4.0
+        step = int(t // every) if every > 0 else 0
+        palette, patch = self.colors("colors"), self.p["patch"]
+        return [palette[(i // patch - step) % len(palette)] for i in range(self.n)]

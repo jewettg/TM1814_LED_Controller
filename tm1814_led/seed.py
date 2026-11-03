@@ -15,8 +15,8 @@ HALLOWEEN_FLASH = ["#ffffff", "#78a0ff"]
 def _effects() -> List[Dict[str, Any]]:
     e: List[Dict[str, Any]] = []
 
-    def add(key, name, kind, params, desc=""):
-        e.append({"key": key, "name": name, "kind": kind, "params": params, "description": desc})
+    def add(key, name, kind, params, desc="", section=""):
+        e.append({"key": key, "name": name, "kind": kind, "params": params, "description": desc, "section": section})
 
     for key, name, color in (("red", "Red", "#ff0000"), ("orange", "Orange", "#ff5a00"), ("green", "Green", "#00ff00"),
                              ("blue", "Blue", "#0000ff"), ("purple", "Purple", "#8c00ff"),
@@ -61,6 +61,9 @@ def _effects() -> List[Dict[str, Any]]:
         "Every 4th pixel for an hour, then every 5th, then every 6th, then back to 4th (changes on the hour).")
     add("fall-colors", "Fall Colors", "fall_colors", {},
         "Random 2 to 5 LED patches of autumn colors with black spacing; a new random pattern every minute.")
+    add("fall-march", "Fall Colors March", "fall_march", {},
+        "The Fall Colors palette in order along the strip, stepping to the next color at the interval you set.",
+        "Thanksgiving / Fall")
     add("custom-alternate", "Custom example - Red/blue alternate", "frames", {},
         "Two-frame animation made in the frame editor; open it to see how it works.")
     return e
@@ -89,11 +92,15 @@ def seed_catalog(db: Database) -> None:
     for e in _effects():
         if e["key"] in done:
             continue
+        params = e["params"]
+        if e["key"] == "fall-march" and "fall-colors" in ids:      # same colors as your Fall Colors, edits included
+            params = {**params, "colors": db.get_effect(ids["fall-colors"])["params"]["colors"]}
         try:
-            created = db.create_effect(e["name"], e["kind"], e["params"], e["description"], seed_key=e["key"])
+            created = db.create_effect(e["name"], e["kind"], params, e["description"], seed_key=e["key"],
+                                       section=e["section"])
         except Conflict:   # you already made an effect with this name: keep yours and add ours beside it
-            created = db.create_effect(e["name"] + " (built-in)", e["kind"], e["params"], e["description"],
-                                       seed_key=e["key"])
+            created = db.create_effect(e["name"] + " (built-in)", e["kind"], params, e["description"],
+                                       seed_key=e["key"], section=e["section"])
         ids[e["key"]] = created["id"]
         new_done.add(e["key"])
     for r in _runlists():

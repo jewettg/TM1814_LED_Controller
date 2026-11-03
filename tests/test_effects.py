@@ -324,3 +324,41 @@ def test_fall_colors_is_repeatable_per_seed_animated_and_preview_is_fast():
     assert a == fx.render_preview("fall_colors", {}, N, 12, 5, seed=2) and len(set(a)) == 3    # a new pattern every 4 s in the preview
     assert fx.REGISTRY["fall_colors"].family() == "animated" and "sped up" in fx.REGISTRY["fall_colors"].preview_note
     assert len(fx.build("fall_colors", {}, N, seed=9).p["colors"]) == 8
+
+
+# ---- Fall Colors March
+def test_fall_march_shows_the_colors_in_order_and_steps_on_the_timer():
+    from tm1814_led.protocol import parse_hex
+    e = fx.build("fall_march", {"colors": ["#ff0000", "#00ff00", "#0000ff"], "patch": 2, "march_seconds": 2}, 12)
+    red, green, blue = (parse_hex(c) for c in ("#ff0000", "#00ff00", "#0000ff"))
+    assert e.frame(0) == [red] * 2 + [green] * 2 + [blue] * 2 + [red] * 2 + [green] * 2 + [blue] * 2
+    assert e.frame(1.9) == e.frame(0)                                      # rests until the interval is up
+    assert e.frame(2.0) == [blue] * 2 + [red] * 2 + [green] * 2 + [blue] * 2 + [red] * 2 + [green] * 2   # every patch moves on
+    assert e.frame(6.0) == e.frame(0)                                      # three colors: back where it began
+
+
+def test_fall_march_with_no_interval_holds_still():
+    e = fx.build("fall_march", {"march_seconds": 0}, 40)
+    assert e.frame(0) == e.frame(1000.0) and len(e.frame(0)) == 40
+
+
+def test_fall_march_defaults_to_the_fall_colors_palette():
+    assert fx.REGISTRY["fall_march"].clean({})["colors"] == fx.REGISTRY["fall_colors"].clean({})["colors"]
+
+
+# ---- per-effect brightness
+def test_drawn_effects_offer_a_brightness_override_but_native_ones_do_not():
+    schema = {k["kind"]: {p["key"] for p in k["params"]} for k in fx.kinds_schema()}
+    assert {"override_brightness", "brightness_level"} <= schema["fall_march"]
+    assert {"override_brightness", "brightness_level"} <= schema["nth"] and {"override_brightness", "brightness_level"} <= schema["rainbow"]
+    assert "override_brightness" not in schema["builtin"] and "override_brightness" not in schema["solid"]
+    p = fx.REGISTRY["nth"].clean({})
+    assert p["override_brightness"] is False and p["brightness_level"] == 100
+    assert fx.REGISTRY["nth"].clean({"override_brightness": True, "brightness_level": 500})["brightness_level"] == 100
+
+
+def test_the_preview_shows_the_overridden_brightness():
+    base = {"every": 1, "use_white": False, "color": "#ff0000", "background": "#000000"}
+    full = fx.render_preview("nth", base, 4, 1, 1)[0]
+    dim = fx.render_preview("nth", {**base, "override_brightness": True, "brightness_level": 50}, 4, 1, 1)[0]
+    assert full.startswith("ff0000") and dim.startswith("7f0000")

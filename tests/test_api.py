@@ -130,6 +130,8 @@ def test_needs_setup_when_no_controller_configured():
 
 def test_effect_sections(client):
     emb = ids(client)["Halloween - Embers"]
+    assert client.get("/api/sections").json() == ["Thanksgiving / Fall"]      # made by the seeded Fall Colors March
+    client.post("/api/sections/delete", json={"name": "Thanksgiving / Fall"})
     assert client.get("/api/sections").json() == []
     assert client.get(f"/api/effects/{emb}").json()["section"] == ""
     assert client.post("/api/sections", json={"name": "  Halloween  "}).json() == ["Halloween"]
@@ -155,3 +157,29 @@ def test_seeding_keeps_a_users_effect_with_the_same_name(tmp_path):
     seed_catalog(d)
     names = [e["name"] for e in d.list_effects()]
     assert "Fall Colors" in names and "Fall Colors (built-in)" in names
+
+
+def test_seeding_adds_fall_colors_march_in_the_fall_section_with_the_fall_colors(tmp_path):
+    from tm1814_led.db import Database
+    from tm1814_led.seed import seed_catalog
+    d = Database(str(tmp_path / "x.db"))
+    seed_catalog(d)
+    by = {e["name"]: e for e in d.list_effects()}
+    march = by["Fall Colors March"]
+    assert march["section"] == "Thanksgiving / Fall" and "Thanksgiving / Fall" in d.list_sections()
+    assert march["params"]["colors"] == by["Fall Colors"]["params"]["colors"]
+
+
+def test_fall_colors_march_copies_the_users_edited_fall_colors(tmp_path):
+    from tm1814_led.db import Database
+    from tm1814_led.seed import seed_catalog
+    d = Database(str(tmp_path / "x.db"))
+    d.update_settings({"seeded_keys": []})
+    seed_catalog(d)
+    fall = next(e for e in d.list_effects() if e["name"] == "Fall Colors")
+    d.update_effect(fall["id"], params={"colors": ["#112233", "#445566"]})
+    d.update_settings({"seeded_keys": [k for k in d.settings()["seeded_keys"] if k != "fall-march"]})
+    d.delete_effect(next(e["id"] for e in d.list_effects() if e["name"] == "Fall Colors March"))
+    seed_catalog(d)
+    march = next(e for e in d.list_effects() if e["name"] == "Fall Colors March")
+    assert march["params"]["colors"] == ["#112233", "#445566"]

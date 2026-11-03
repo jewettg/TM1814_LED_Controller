@@ -70,6 +70,7 @@ class Controller:
         self.max_groups = max_groups
         self.refresh_interval = refresh_interval
         self.brightness = 100                      # master brightness 0-100, applied to everything we send
+        self.brightness_override: Optional[int] = None   # the playing effect's own level; replaces the master while set
         self.last_error = ""
         self.last_state: Optional[State] = None
         self.commands_sent = 0
@@ -256,7 +257,13 @@ class Controller:
 
     # ------------------------------------------------------------ high level
     def _scale(self, px: Pixel) -> Pixel:
-        return px if self.brightness >= 100 else P.scale_pixel(px, self.brightness)
+        level = self.level
+        return px if level >= 100 else P.scale_pixel(px, level)
+
+    @property
+    def level(self) -> int:
+        """The brightness in force: the playing effect's override, else the master."""
+        return self.brightness if self.brightness_override is None else self.brightness_override
 
     def power(self, on: bool) -> None:
         with self._lock:
@@ -270,7 +277,7 @@ class Controller:
             self._shown = None
             self._in_scribble = False
             if white is not None:
-                self.send_inner(P.solid_message(white=int(white * self.brightness / 100)))
+                self.send_inner(P.solid_message(white=int(white * self.level / 100)))
             else:
                 self.send_inner(P.solid_message(self._scale(rgb)))
 

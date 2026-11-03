@@ -217,3 +217,15 @@ def test_an_idle_connection_closed_by_the_controller_is_replaced_without_an_erro
         assert len(fake.received) == 3 and c.last_error == ""
     finally:
         fake.close()
+
+
+def test_an_effects_brightness_override_replaces_the_master():
+    c = make_sim()
+    c.brightness, c.brightness_override = 50, 100
+    c.solid((200, 100, 0))
+    assert c.sent[-1][10:-1][7:12] == bytes(P.hsv_bytes((200, 100, 0)))
+    c.brightness_override = 25
+    c.solid((200, 100, 0))
+    assert c.sent[-1][10:-1][7:12] == bytes(P.hsv_bytes((50, 25, 0)))
+    c.brightness_override = None
+    assert c.level == 50
