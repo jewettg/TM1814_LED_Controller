@@ -357,7 +357,7 @@ class SteppingNth(Effect):
 
 # No blue in any of them: on these LEDs even a little blue turns a red pink. Deep reds, dark and light oranges, bright and
 # dark yellows, browns.
-FALL_PALETTE = ["#a01000", "#6e0c00", "#b84800", "#f07800", "#ffc000", "#c08000", "#6b3000", "#432000"]
+FALL_PALETTE = ["#a01000", "#6e0c00", "#b84800", "#f07800", "#ffa000", "#b87000", "#6b3000", "#432000"]
 BLACK = (0, 0, 0)
 
 
