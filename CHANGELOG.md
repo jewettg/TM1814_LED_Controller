@@ -11,7 +11,7 @@
   can create your own sections, rename or delete them, and move any effect between sections with its Move button;
   deleting a section never deletes effects (they return to their built-in group).
 * **Fall Colors effect** (random patches of 2-5 LEDs in fall colors, with black spacing, new pattern every minute by
-  default; add or remove colors in the editor). Test buttons for email and phone push separately, with the real
+  default; add or remove colors in the editor). The palette has no blue (a little blue turns red pink on these LEDs): deep reds, dark and light oranges, bright and dark yellows, browns. Test buttons for email and phone push separately, with the real
   failure reason (for example Gmail's "app password required"). Settings layout fixes.
 * **Location by address.** Settings asks for an address, town or ZIP code instead of latitude and longitude; the program
   looks it up (OpenStreetMap Nominatim, politely: cached, one request a second) and shows today's sunrise and sunset to

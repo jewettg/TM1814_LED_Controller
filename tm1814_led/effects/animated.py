@@ -355,7 +355,9 @@ class SteppingNth(Effect):
         return nth_frame(self, self.spacing(t))
 
 
-FALL_PALETTE = ["#cc5500", "#ff7518", "#ffb000", "#e6a100", "#b0121b", "#8b1a1a", "#b7410e", "#7b3f00"]
+# No blue in any of them: on these LEDs even a little blue turns a red pink. Deep reds, dark and light oranges, bright and
+# dark yellows, browns.
+FALL_PALETTE = ["#a01000", "#6e0c00", "#b84800", "#f07800", "#ffc000", "#c08000", "#6b3000", "#432000"]
 BLACK = (0, 0, 0)
 
 
@@ -364,7 +366,7 @@ class FallColors(Effect):
     kind = "fall_colors"
     label = "Fall colors"
     category = "Animated"
-    description = ("Random patches of 2 to 5 LEDs in autumn colors (burnt orange, pumpkin, amber, crimson, rust, brown), with "
+    description = ("Random patches of 2 to 5 LEDs in autumn colors (deep red, dark and light orange, bright and dark yellow, brown), with "
                    "black patches for spacing, filling the whole strip. After the time you set, a brand new random pattern "
                    "replaces it. Needs this program running to change the pattern.")
     preview_note = ("Preview only: it is sped up to show a new pattern every 4 seconds. On the lights the pattern stays "
